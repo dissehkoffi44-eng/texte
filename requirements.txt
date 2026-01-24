@@ -1,13 +1,4 @@
---extra-index-url https://download.pytorch.org/whl/cpu
-
-torch==2.1.2
-torchaudio==2.1.2
-
-numpy==1.26.4
-librosa==0.10.2
-soundfile==0.12.1
 streamlit==1.41.1
-tqdm==4.66.5
-pillow==10.4.0
-
-git+https://github.com/deezer/skey.git
+librosa==0.10.2
+numpy==1.26.4
+soundfile==0.12.1
