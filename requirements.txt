@@ -1,12 +1,13 @@
-# Core pour skey (versions approximatives compatibles – testées fin 2025)
-torch>=2.0.0
-torchaudio>=2.0.0
-streamlit>=1.30.0
-# Très fortement recommandés (souvent nécessaires avec torch audio)
-numpy
-librosa>=0.10.0   # utile si tu veux ajouter des visualisations chroma plus tard
-soundfile         # backend alternatif pour lire certains formats audio
+--extra-index-url https://download.pytorch.org/whl/cpu
 
-# Optionnel mais utile pour la stabilité / performances
-tqdm
-pillow
+torch==2.1.2
+torchaudio==2.1.2
+
+numpy==1.26.4
+librosa==0.10.2
+soundfile==0.12.1
+streamlit==1.41.1
+tqdm==4.66.5
+pillow==10.4.0
+
+git+https://github.com/deezer/skey.git
