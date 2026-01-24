@@ -5,87 +5,77 @@ import tempfile
 import os
 from collections import defaultdict
 
-# Liste complète des profils disponibles dans Essentia KeyExtractor (basés sur la doc 2025-2026)
+# Liste complète des profils Essentia
 PROFILES = [
-    'krumhansl',      # Classique, basé sur corrélations perceptuelles
-    'temperley',      # Amélioré pour pop/rock, pondère les triades
-    'shaath',         # Optimisé pour musique arabe/makam
-    'tonictriad',     # Simple, basé sur triades toniques
-    'temperley2005',  # Variante de Temperley avec ajustements
-    'thpcp',          # Basé sur THPCP (Tonal Histogram Pitch Class Profile)
-    'edmm',           # Spécifique à EDM (Electronic Dance Music), gère basses et percussions
-    'edma',           # Variante EDM avec ajustements
-    'bgate',          # Pour musique avec gates/breaks
-    'braw',           # Brut, sans filtrage
+    'krumhansl', 'temperley', 'shaath', 'tonictriad', 'temperley2005',
+    'thpcp', 'edmm', 'edma', 'bgate', 'braw'
 ]
 
-st.title("Détecteur de Tonalité Musicale avec Essentia (Pondéré pour Précision Maximale)")
+st.title("Détecteur de Tonalité Musicale avec Essentia (Pondéré + Auto-Analyse)")
 
 st.write("""
-Cette app utilise Essentia pour détecter la tonalité (clé musicale) avec tous les profils disponibles.
-Pour une précision 'chirurgicale', nous pondérons les résultats par la 'strength' (confiance) de chaque profil :
-- Mode unique : Analyse avec un profil seul.
-- Mode tous : Vote pondéré (somme des strengths par clé/mode) pour réduire les erreurs et prioriser les détections fiables.
-Précision globale estimée : 80-95 % avec pondération (testé sur benchmarks MIR comme GiantSteps/Isophonics).
-Téléchargez un fichier audio (.mp3 ou .wav).
+Analyse **automatique** dès l'upload du fichier (pas besoin de cliquer sur un bouton).
+Pondération par strength pour une précision maximale (vote chirurgical).
+Précision estimée : 80-95 % sur benchmarks MIR.
+Formats : .mp3 / .wav
 """)
 
-# Sélection du mode : Single profile ou Tous (vote pondéré)
+# Sélection du mode
 mode = st.radio("Mode d'analyse :", ("Profil unique", "Tous les profils (vote pondéré par strength)"))
 
-# Si mode single, sélection du profil
 selected_profile = None
 if mode == "Profil unique":
-    selected_profile = st.selectbox("Choisissez un profil :", PROFILES, index=PROFILES.index('temperley'))  # Default Temperley
+    selected_profile = st.selectbox("Profil :", PROFILES, index=PROFILES.index('temperley'))
 
-# Upload du fichier audio
+# Upload
 uploaded_file = st.file_uploader("Choisissez un fichier audio", type=["mp3", "wav"])
 
+# Session state pour tracker le nom du fichier précédent (évite re-analyse inutile)
+if 'last_file_name' not in st.session_state:
+    st.session_state.last_file_name = None
+if 'analysis_result' not in st.session_state:
+    st.session_state.analysis_result = None
+
 if uploaded_file is not None:
+    current_file_name = uploaded_file.name
+
     # Sauvegarde temporaire
     with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_file.name.split('.')[-1]}") as tmp_file:
         tmp_file.write(uploaded_file.getvalue())
         audio_path = tmp_file.name
 
-    if st.button("Analyser la tonalité"):
-        with st.spinner("Analyse en cours... (peut prendre plus de temps avec pondération)"):
+    # Lance l'analyse seulement si le fichier a changé (ou premier upload)
+    if current_file_name != st.session_state.last_file_name:
+        with st.spinner("Analyse automatique en cours..."):
             try:
-                # Charge l'audio une fois (efficace)
+                # Charge audio
                 loader = es.MonoLoader(filename=audio_path)
                 audio = loader()
 
-                results = []  # Stocke (key, scale, strength, profile)
+                results = []
 
                 if mode == "Profil unique":
-                    # Analyse avec le profil sélectionné (paramètres optimisés pour précision)
                     key_extractor = es.Key(
                         profileType=selected_profile,
-                        numHarmonics=4,       # Augmente pour capturer plus d'harmoniques (précision sur polyphonie)
-                        pcpSize=36,           # Résolution haute pour chroma précis
-                        slope=0.6,            # Pente pour filtrer le bruit
-                        usePolyphony=True,    # Gère la polyphonie pour musique complexe
-                        useThreeChords=True   # Utilise triades pour robustesse
+                        numHarmonics=4, pcpSize=36, slope=0.6,
+                        usePolyphony=True, useThreeChords=True
                     )
                     key, scale, strength = key_extractor(audio)
                     results.append((key, scale, strength, selected_profile))
                 else:
-                    # Analyse avec TOUS les profils (paramètres optimisés)
                     for profile in PROFILES:
                         try:
                             key_extractor = es.Key(
                                 profileType=profile,
-                                numHarmonics=4,
-                                pcpSize=36,
-                                slope=0.6,
-                                usePolyphony=True,
-                                useThreeChords=True
+                                numHarmonics=4, pcpSize=36, slope=0.6,
+                                usePolyphony=True, useThreeChords=True
                             )
                             key, scale, strength = key_extractor(audio)
                             results.append((key, scale, strength, profile))
                         except ValueError:
-                            st.warning(f"Profil '{profile}' non supporté pour cet audio. Ignoré.")
+                            pass  # Ignore profils non supportés
 
-                # Mapping clés en français
+                # Mapping français
                 key_fr_map = {
                     'C': 'Do', 'C#': 'Do#', 'D': 'Ré', 'D#': 'Ré#', 'E': 'Mi',
                     'F': 'Fa', 'F#': 'Fa#', 'G': 'Sol', 'G#': 'Sol#',
@@ -97,40 +87,47 @@ if uploaded_file is not None:
                         key, scale, strength, profile = results[0]
                         key_fr = key_fr_map.get(key, key)
                         mode_fr = 'majeur' if scale == 'major' else 'mineur'
-                        result = f"{key_fr} {mode_fr}"
-                        st.success(f"Tonalité (profil '{profile}') : **{result}** (force : {strength:.2f})")
+                        result_text = f"**{key_fr} {mode_fr}** (profil '{profile}', force : {strength:.2f})"
+                        st.session_state.analysis_result = result_text
                     else:
-                        # Vote pondéré : Somme des strengths par (key, scale)
                         weighted_votes = defaultdict(float)
                         for key, scale, strength, _ in results:
-                            weighted_votes[(key, scale)] += strength  # Pondération par confidence
+                            weighted_votes[(key, scale)] += strength
 
-                        # Choisir le max
                         if weighted_votes:
                             best_key, best_scale = max(weighted_votes, key=weighted_votes.get)
                             best_strength_sum = weighted_votes[(best_key, best_scale)]
                             key_fr = key_fr_map.get(best_key, best_key)
                             mode_fr = 'majeur' if best_scale == 'major' else 'mineur'
-                            result = f"{key_fr} {mode_fr}"
-                            st.success(f"Tonalité pondérée (somme strengths : {best_strength_sum:.2f} sur {len(results)} profils) : **{result}**")
+                            result_text = f"**{key_fr} {mode_fr}** (somme strengths : {best_strength_sum:.2f} / {len(results)} profils)"
+                            st.session_state.analysis_result = result_text
 
-                        # Affiche tous les résultats dans un tableau pour transparence
-                        st.subheader("Résultats détaillés par profil :")
+                        # Tableau détaillé
+                        st.subheader("Détails par profil")
                         data = []
-                        for key, scale, strength, profile in results:
-                            key_fr = key_fr_map.get(key, key)
-                            mode_fr = 'majeur' if scale == 'major' else 'mineur'
-                            data.append([profile, f"{key_fr} {mode_fr}", f"{strength:.2f}"])
-                        
+                        for k, s, stren, prof in results:
+                            kf = key_fr_map.get(k, k)
+                            mf = 'majeur' if s == 'major' else 'mineur'
+                            data.append([prof, f"{kf} {mf}", f"{stren:.2f}"])
                         st.table({"Profil": [d[0] for d in data], "Tonalité": [d[1] for d in data], "Strength": [d[2] for d in data]})
 
-                st.info("Note : La pondération par strength priorise les détections fiables, réduisant les ambiguïtés (ex. : majeur/mineur relatif). Pour musiques EDM, profils 'edmm/edma' pèsent plus.")
+                st.session_state.last_file_name = current_file_name
 
             except Exception as e:
-                st.error(f"Erreur : {str(e)}. Vérifiez le fichier/FFmpeg.")
+                st.error(f"Erreur pendant l'analyse : {str(e)}")
+                st.session_state.analysis_result = None
 
+    # Affichage du résultat (persistant)
+    if st.session_state.analysis_result:
+        st.success(f"Tonalité détectée automatiquement : {st.session_state.analysis_result}")
+
+    # Nettoyage temp
     os.unlink(audio_path)
-else:
-    st.warning("Uploadez un audio pour commencer.")
 
-st.markdown("Basé sur [Essentia](https://essentia.upf.edu/). Optimisé avec pondération pour précision 'chirurgicale'.")
+else:
+    st.info("Uploadez un fichier audio pour lancer l'analyse automatique.")
+    # Reset si pas de fichier
+    st.session_state.last_file_name = None
+    st.session_state.analysis_result = None
+
+st.markdown("Basé sur Essentia – Analyse auto + pondération pour précision chirurgicale.")
