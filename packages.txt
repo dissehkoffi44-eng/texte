@@ -1,6 +1,1 @@
 ffmpeg
-libfftw3-3
-libavcodec-dev
-libavformat-dev
-libavutil-dev
-libavresample-dev
