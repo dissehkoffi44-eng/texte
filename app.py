@@ -1,56 +1,39 @@
 import streamlit as st
-import essentia.standard as es
-import numpy as np
+from skey import detect_key
+import torch
+import torchaudio
 import os
+import tempfile
 
-# Configuration de la page
-st.set_page_config(page_title="Audio Key Pro", page_icon="🎹")
+st.title("Détecteur de Tonalité Musicale (Clé) avec Haute Précision")
+st.write("Téléchargez un fichier audio (.mp3 ou .wav) pour déterminer sa tonalité principale en utilisant un modèle SOTA auto-supervisé.")
 
-st.title("🎹 Détecteur de Tonalité Professionnel")
-st.markdown("""
-Cette application utilise **Essentia (Deep Learning)** pour extraire la tonalité 
-et l'accordage (tuning) d'un morceau avec une précision studio.
-""")
+# Upload du fichier audio
+uploaded_file = st.file_uploader("Choisissez un fichier audio", type=["mp3", "wav"])
 
-uploaded_file = st.file_uploader("Glissez un fichier audio ici", type=['mp3', 'wav', 'flac'])
+if uploaded_file is not None:
+    # Sauvegarde temporaire du fichier
+    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_file.name.split('.')[-1]}") as tmp_file:
+        tmp_file.write(uploaded_file.getvalue())
+        audio_path = tmp_file.name
 
-if uploaded_file:
-    # Sauvegarde temporaire du fichier pour Essentia
-    with open("temp_audio", "wb") as f:
-        f.write(uploaded_file.getbuffer())
+    # Bouton pour lancer l'analyse
+    if st.button("Analyser la tonalité"):
+        with st.spinner("Analyse en cours... (cela peut prendre quelques secondes)"):
+            try:
+                # Détection avec skey (sur CPU par défaut)
+                result = detect_key(audio_dir=audio_path, extension=os.path.splitext(audio_path)[1][1:], device="cpu")
+                
+                # Affichage du résultat
+                st.success(f"Tonalité détectée : **{result}**")
+                st.info("Note : Ce modèle est robuste mais peut varier si la chanson a des modulations. Pour plus de précision, analysez des segments spécifiques.")
+            except Exception as e:
+                st.error(f"Erreur lors de l'analyse : {str(e)}. Assurez-vous que le fichier est valide.")
 
-    with st.spinner('Analyse neuronale de la structure harmonique...'):
-        try:
-            # 1. Chargement de l'audio
-            loader = es.MonoLoader(filename="temp_audio")
-            audio = loader()
+    # Nettoyage du fichier temp
+    os.unlink(audio_path)
+else:
+    st.warning("Veuillez uploader un fichier audio pour commencer.")
 
-            # 2. Utilisation du KeyExtractor d'Essentia
-            # Cet algorithme est beaucoup plus précis que les chromagrammes simples
-            key_extractor = es.KeyExtractor()
-            key, scale, strength = key_extractor(audio)
-
-            # 3. Affichage des résultats
-            st.divider()
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.metric(label="Tonalité Détectée", value=f"{key} {scale}")
-            
-            with col2:
-                st.metric(label="Confiance", value=f"{strength:.2f}")
-
-            # Feedback visuel selon la confiance
-            if strength > 0.7:
-                st.success("Analyse fiable : La structure harmonique est claire.")
-            else:
-                st.warning("Analyse complexe : Le morceau pourrait contenir des modulations ou du bruit.")
-
-        except Exception as e:
-            st.error(f"Erreur lors de l'analyse : {e}")
-        
-        finally:
-            if os.path.exists("temp_audio"):
-                os.remove("temp_audio")
-
-st.info("Note : Les fichiers longs (5min+) peuvent prendre quelques secondes à être traités par le modèle.")
+# Pied de page
+st.markdown("Basé sur [skey de Deezer](https://github.com/deezer/skey) - Modèle auto-supervisé égalant les SOTA supervisés.")
