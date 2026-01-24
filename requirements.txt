@@ -1,5 +1,3 @@
 streamlit
-librosa
 numpy
-matplotlib
-soundfile
+essentia
