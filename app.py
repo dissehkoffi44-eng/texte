@@ -1,39 +1,42 @@
 import streamlit as st
-from skey import detect_key
-import torch
-import torchaudio
-import os
+import librosa
+import numpy as np
 import tempfile
+import os
 
-st.title("Détecteur de Tonalité Musicale (Clé) avec Haute Précision")
-st.write("Téléchargez un fichier audio (.mp3 ou .wav) pour déterminer sa tonalité principale en utilisant un modèle SOTA auto-supervisé.")
+st.title("Détecteur de Tonalité (version simple Librosa)")
 
-# Upload du fichier audio
-uploaded_file = st.file_uploader("Choisissez un fichier audio", type=["mp3", "wav"])
+uploaded_file = st.file_uploader("Audio (.mp3/.wav)", type=["mp3", "wav"])
 
-if uploaded_file is not None:
-    # Sauvegarde temporaire du fichier
-    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_file.name.split('.')[-1]}") as tmp_file:
-        tmp_file.write(uploaded_file.getvalue())
-        audio_path = tmp_file.name
+if uploaded_file:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+        tmp.write(uploaded_file.getvalue())
+        path = tmp.name
 
-    # Bouton pour lancer l'analyse
-    if st.button("Analyser la tonalité"):
-        with st.spinner("Analyse en cours... (cela peut prendre quelques secondes)"):
+    if st.button("Analyser"):
+        with st.spinner("..."):
             try:
-                # Détection avec skey (sur CPU par défaut)
-                result = detect_key(audio_dir=audio_path, extension=os.path.splitext(audio_path)[1][1:], device="cpu")
+                y, sr = librosa.load(path, sr=None)
+                chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
+                chroma_mean = np.mean(chroma, axis=1)
                 
-                # Affichage du résultat
-                st.success(f"Tonalité détectée : **{result}**")
-                st.info("Note : Ce modèle est robuste mais peut varier si la chanson a des modulations. Pour plus de précision, analysez des segments spécifiques.")
+                # Profils simples Krumhansl (majeur/mineur)
+                major_profile = np.array([6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88])
+                minor_profile = np.array([6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17])
+                
+                major_corr = np.corrcoef(chroma_mean, major_profile)[0,1]
+                minor_corr = np.corrcoef(chroma_mean, minor_profile)[0,1]
+                
+                keys = ['Do', 'Do#', 'Ré', 'Ré#', 'Mi', 'Fa', 'Fa#', 'Sol', 'Sol#', 'La', 'La#', 'Si']
+                major_key = keys[np.argmax(major_corr)]
+                minor_key = keys[np.argmax(minor_corr)]
+                
+                if major_corr > minor_corr:
+                    result = f"{major_key} majeur (corr: {major_corr:.2f})"
+                else:
+                    result = f"{minor_key} mineur (corr: {minor_corr:.2f})"
+                
+                st.success(f"Tonalité : **{result}**")
             except Exception as e:
-                st.error(f"Erreur lors de l'analyse : {str(e)}. Assurez-vous que le fichier est valide.")
-
-    # Nettoyage du fichier temp
-    os.unlink(audio_path)
-else:
-    st.warning("Veuillez uploader un fichier audio pour commencer.")
-
-# Pied de page
-st.markdown("Basé sur [skey de Deezer](https://github.com/deezer/skey) - Modèle auto-supervisé égalant les SOTA supervisés.")
+                st.error(f"Erreur : {e}")
+    os.unlink(path)
