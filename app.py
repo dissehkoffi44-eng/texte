@@ -196,7 +196,7 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
             weight = 1.45 if 0.18 < (start_s / duration) < 0.82 else 1.0
             
             conf = seg_scores[best_key]
-            if conf >= 0.88:
+            if conf >= 0.8:
                 weight *= 2.2
             elif conf >= 0.84:
                 weight *= 1.7
