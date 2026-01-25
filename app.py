@@ -97,7 +97,8 @@ for profile in PROFILES.values():
             scores[f"{NOTES_LIST[i]} {mode}"] += (combined + bonus) / len(PROFILES)
 return scoresdef process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
     ext = file_name.lower().split('.')[-1]
-    sr_target = 22050try:
+    sr_target = 22050
+try:
     if ext == 'm4a':
         audio = AudioSegment.from_file(io.BytesIO(file_bytes), format="m4a")
         samples = np.array(audio.get_array_of_samples(), dtype=np.float32)
