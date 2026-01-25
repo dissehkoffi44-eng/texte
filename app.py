@@ -6,6 +6,25 @@ from music21 import *
 import io
 from scipy.signal import find_peaks
 
+# ────────────────────────────────────────────────
+#  TESTS D'IMPORTS – placés TOUT EN HAUT
+# ────────────────────────────────────────────────
+try:
+    from music21 import chord, stream, chord  # double chord pour forcer l'import
+    st.success("music21 importé avec succès !")
+except Exception as e:
+    st.error(f"Erreur music21 : {e}")
+    st.stop()   # ← arrête tout de suite pour voir l'erreur
+
+try:
+    import librosa
+    st.success("librosa OK")
+except Exception as e:
+    st.error(f"Erreur librosa : {e}")
+    st.stop()
+
+# Si on arrive ici → les deux bibliothèques principales sont importées
+
 st.set_page_config(page_title="Détecteur de Tonalité Ultra-Précis", page_icon="🎵", layout="wide")
 
 st.title("🎵 Détecteur de Tonalité Maximisé (visant 92–96 %)")
@@ -18,7 +37,7 @@ MINOR_PROFILE = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 
 def chord_to_root_and_type(chord_str):
     try:
         c = chord.Chord(chord_str)
-        return c.root().pitchClass, c.quality  # quality = 'major', 'minor', 'diminished', etc.
+        return c.root().pitchClass, c.quality
     except:
         return None, None
 
@@ -38,7 +57,7 @@ def detect_key_ensemble(chords_list):
     if len(s) == 0:
         return None, 0.0, []
     
-    # 1. Analyse music21 (très robuste)
+    # 1. Analyse music21
     try:
         key1 = s.analyze('key')
         score1 = getattr(key1, 'correlationCoefficient', 0.85)
@@ -52,7 +71,7 @@ def detect_key_ensemble(chords_list):
     
     # 2. Krumhansl-Schmuckler amélioré
     hist = np.zeros(12)
-    weights = np.linspace(0.5, 1.5, len(chords_list))  # derniers accords plus importants
+    weights = np.linspace(0.5, 1.5, len(chords_list))
     for i, ch_str in enumerate(chords_list):
         root, _ = chord_to_root_and_type(ch_str)
         if root is not None:
@@ -69,7 +88,7 @@ def detect_key_ensemble(chords_list):
     best_ks = max(scores, key=lambda x: x[2])
     score2 = best_ks[2]
     
-    # 3. Cadence boosting (V→I ou V→i très fort)
+    # 3. Cadence boosting simple
     cadence_boost = 0.0
     for j in range(len(chords_list)-1):
         try:
@@ -81,7 +100,7 @@ def detect_key_ensemble(chords_list):
         except:
             pass
     
-    # Fusion des scores
+    # Fusion
     final_scores = []
     seen = set()
     for note, mode, sc in scores:
@@ -99,15 +118,11 @@ def detect_key_ensemble(chords_list):
     mode_fr = "Majeur" if best[1] == "major" else "Mineur"
     return f"{best[0]} {mode_fr}", round(best[2], 3), final_scores[:3]
 
-# Interface (similaire mais avec top-3 et meilleure audio)
-# ... (le reste du code reste très proche de la version précédente, mais avec l'appel à detect_key_ensemble)
-
-# Pour l'audio : pipeline amélioré
 def analyze_audio_advanced(y, sr, duration_limit=120):
     y = y[:int(duration_limit * sr)]
-    y_harmonic, _ = librosa.effects.hpss(y)                    # Séparation harmonique
+    y_harmonic, _ = librosa.effects.hpss(y)
     y_harmonic = librosa.util.normalize(y_harmonic)
-    y_harmonic = y_harmonic[np.abs(y_harmonic) > 0.02]         # Suppression bruit faible
+    y_harmonic = y_harmonic[np.abs(y_harmonic) > 0.02]
     
     chroma = librosa.feature.chroma_cqt(y=y_harmonic, sr=sr, bins_per_octave=36, hop_length=512)
     hist = np.mean(chroma, axis=1)
@@ -125,4 +140,50 @@ def analyze_audio_advanced(y, sr, duration_limit=120):
     mode_fr = "Majeur" if best[1] == "major" else "Mineur"
     return f"{best[0]} {mode_fr}", round(best[2], 3), scores[:3]
 
-# (Intégrer ces fonctions dans les tabs comme avant)
+# ────────────────────────────────────────────────
+#                 INTERFACE
+# ────────────────────────────────────────────────
+
+tab_audio, tab_chords = st.tabs(["Analyse Audio", "Analyse Accords (bientôt)"])
+
+with tab_audio:
+    st.markdown("Charge un fichier audio (mp3, wav, ogg, flac...)")
+    
+    audio_file = st.file_uploader(
+        "Sélectionne ton fichier audio",
+        type=["mp3", "wav", "ogg", "flac", "m4a"],
+        help="Durée recommandée : < 2 minutes pour des résultats rapides",
+        key="audio_upload"
+    )
+    
+    if audio_file is not None:
+        try:
+            # Lecture sécurisée via BytesIO
+            audio_bytes = audio_file.read()
+            audio_io = io.BytesIO(audio_bytes)
+            
+            with st.spinner("Analyse en cours..."):
+                y, sr = librosa.load(audio_io, sr=None)
+                st.success(f"Audio chargé – durée : {len(y)/sr:.1f} secondes")
+                
+                key, conf, top3 = analyze_audio_advanced(y, sr)
+                
+                st.subheader(f"Résultat principal : **{key}**")
+                st.write(f"Confiance : **{conf:.3f}**")
+                
+                st.markdown("**Top 3 propositions :**")
+                for note, mode, score in top3:
+                    m = "Majeur" if mode == "major" else "Mineur"
+                    st.write(f"- {note} {m} → {score:.3f}")
+                    
+        except Exception as e:
+            st.error(f"Erreur pendant le traitement audio :\n{str(e)}")
+    else:
+        st.info("En attente du fichier audio...")
+
+with tab_chords:
+    st.info("Fonctionnalité analyse accords / MIDI en cours de développement...")
+    st.write("(Tu peux déjà tester la partie audio ci-dessus)")
+
+if st.button("Rafraîchir la page (debug)"):
+    st.rerun()
