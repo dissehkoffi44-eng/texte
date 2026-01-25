@@ -1,4 +1,4 @@
-# RCDJ228 MUSIC SNIPER M5 - HYBRIDE 2026 (avec seuil configurable)
+# RCDJ228 MUSIC SNIPER M5 - HYBRIDE 2026 (avec seuil configurable + boost segments très confiants)
 # Moteur M4 + Timeline fine M3 + UI/Telegram premium M4
 
 import streamlit as st
@@ -183,15 +183,26 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
         best_key = max(seg_scores, key=seg_scores.get)
 
         if seg_scores[best_key] >= threshold:
+            # Poids de base (milieu du morceau plus important)
             weight = 1.45 if 0.18 < (start_s / duration) < 0.82 else 1.0
-            segment_votes[best_key] += seg_scores[best_key] * weight
+            
+            # Boost progressif selon la confiance
+            conf = seg_scores[best_key]
+            if conf >= 0.88:
+                weight *= 2.2
+            elif conf >= 0.84:
+                weight *= 1.7
+            elif conf >= 0.80:
+                weight *= 1.3
+            
+            segment_votes[best_key] += conf * weight
             timeline.append({
                 "time": start_s + seg_duration/2,
                 "key": best_key,
-                "score": seg_scores[best_key]
+                "score": conf
             })
             valid_segments += 1
-            retained_scores.append(seg_scores[best_key])
+            retained_scores.append(conf)
 
     if not segment_votes and not global_scores:
         return None
@@ -239,12 +250,11 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
         "chroma": chroma_cqt_glob.tolist(),
         "valid_segments": valid_segments,
         "duration": round(duration, 1),
-        # Stats supplémentaires pour affichage
         "retention_pct": (valid_segments / len(segments_starts) * 100) if len(segments_starts) > 0 else 0,
         "avg_retained_score": np.mean(retained_scores) if retained_scores else 0
     }
 
-    # Telegram
+    # Telegram Report
     if TELEGRAM_TOKEN and CHAT_ID:
         try:
             df_tl = pd.DataFrame(timeline)
@@ -313,7 +323,7 @@ def get_chord_test_js(btn_id, key_str):
     """
 
 # ────────────────────────────────────────────────
-# INTERFACE PRINCIPALE
+# INTERFACE
 # ────────────────────────────────────────────────
 st.title("🔫 RCDJ228 MUSIC SNIPER M5 — Précision & Granularité 2026")
 
@@ -321,11 +331,10 @@ uploaded_files = st.file_uploader("Déposez vos tracks (mp3, wav, flac, m4a)",
                                  type=['mp3','wav','flac','m4a'], 
                                  accept_multiple_files=True)
 
-# Sidebar avec contrôle du seuil
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2569/2569107.png", width=100)
     st.header("Sniper M5")
-    st.caption("Hybride 2026 • Précision M4 + Timeline fine")
+    st.caption("Hybride 2026 • Précision M4 + Timeline fine + boost conf ≥80%")
 
     st.subheader("Réglages fins")
     SEGMENT_THRESHOLD = st.slider(
@@ -343,7 +352,7 @@ with st.sidebar:
         st.rerun()
 
 # ────────────────────────────────────────────────
-# Traitement des fichiers
+# Traitement
 # ────────────────────────────────────────────────
 if uploaded_files:
     total = len(uploaded_files)
@@ -380,13 +389,12 @@ if uploaded_files:
                 </div>
                 """, unsafe_allow_html=True)
 
-                # Stats segments
                 st.markdown(f"""
                 <div class="stats-box">
-                    Seuil utilisé : <b>{SEGMENT_THRESHOLD:.2f}</b><br>
-                    Segments retenus : <b>{data['valid_segments']}</b> / {len(np.arange(0, max(0.1, data['duration'] - 8), 3)):.0f} 
-                    ({data['retention_pct']:.1f} %)<br>
-                    Score moyen segments valides : <b>{data['avg_retained_score']:.3f}</b>
+                    Seuil : <b>{SEGMENT_THRESHOLD:.2f}</b>  
+                      Segments retenus : <b>{data['valid_segments']}</b> / ~{len(np.arange(0, max(0.1, data['duration'] - 8), 3)):.0f} 
+                    ({data['retention_pct']:.1f} %)  
+                      Score moyen retenus : <b>{data['avg_retained_score']:.3f}</b>
                 </div>
                 """, unsafe_allow_html=True)
 
