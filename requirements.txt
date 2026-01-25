@@ -1,10 +1,3 @@
-streamlit>=1.30.0
-essentia>=2.1b6.dev1110
-numpy>=1.20.0
-librosa
-pandas
-plotly
-scipy
-requests
-pydub
-kaleido==0.2.1
+streamlit>=1.32
+music21>=9.1
+numpy
