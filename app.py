@@ -1,7 +1,5 @@
 # RCDJ228 MUSIC SNIPER M5 - HYBRIDE 2026 (avec seuil configurable + boost segments très confiants)
 # Moteur M4 + Timeline fine M3 + UI/Telegram premium M4
-# Mise à jour : boost intro + corps / pénalité outro (approche 1 - 2026)
-
 import streamlit as st
 import librosa
 import numpy as np
@@ -151,7 +149,7 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
     bass_glob        = np.mean(librosa.feature.chroma_cqt(y=butter_lowpass(y, sr), sr=sr), axis=1)
     global_scores    = vote_profiles(chroma_cqt_glob, chroma_cens_glob, bass_glob)
 
-    # Analyse segments ────────────────────────────────────────────────
+    # Analyse segments
     seg_duration = 8.0
     step         = 3.0
     segments_starts = np.arange(0, max(0.1, duration - seg_duration), step)
@@ -180,16 +178,10 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
         best_key = max(seg_scores, key=seg_scores.get)
 
         if seg_scores[best_key] >= threshold:
-            # ─── NOUVEAU : Pondération temporelle renforcée intro + corps ───
-            position = start_s / duration
-            if position < 0.12:               # Intro + début (≈12% du morceau)
-                weight = 1.55
-            elif 0.12 <= position < 0.80:     # Corps principal (≈68% du morceau)
-                weight = 1.35
-            else:                             # Outro / fin (20% restants)
-                weight = 0.70
-
-            # Boost progressif selon la confiance (inchangé)
+            # Poids de base (milieu du morceau plus important)
+            weight = 1.45 if 0.18 < (start_s / duration) < 0.82 else 1.0
+            
+            # Boost progressif selon la confiance
             conf = seg_scores[best_key]
             if conf >= 0.88:
                 weight *= 2.2
@@ -256,7 +248,7 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
         "avg_retained_score": np.mean(retained_scores) if retained_scores else 0
     }
 
-    # Telegram Report (inchangé)
+    # Telegram Report
     if TELEGRAM_TOKEN and CHAT_ID:
         try:
             df_tl = pd.DataFrame(timeline)
