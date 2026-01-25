@@ -1,85 +1,134 @@
 import streamlit as st
-from music21 import *
 import numpy as np
+import pandas as pd
+import librosa
+from music21 import *
+import io
 
-st.set_page_config(page_title="Détecteur de Tonalité", page_icon="🎵", layout="centered")
-st.title("🎵 Détecteur Automatique de Tonalité")
-st.markdown("Collez votre grille d'accords → l'app détecte la tonalité en appliquant les règles classiques")
+st.set_page_config(page_title="Détecteur de Tonalité Avancé", page_icon="🎵", layout="wide")
+st.title("🎵 Détecteur de Tonalité Avancé")
+st.markdown("Analyse par grille d'accords (par sections) + analyse audio avec librosa")
 
-# Exemple par défaut
-example = "C G Am F\nC G F C\nDm G C Am\nF G C"
+# ===================== PROFILS DE CLÉS (Krumhansl-Schmuckler) =====================
+MAJOR_PROFILE = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
+MINOR_PROFILE = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
 
-chords_text = st.text_area(
-    "Grille d'accords (une ligne par mesure ou tout d'un coup)",
-    example,
-    height=150
-)
+NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
-if st.button("🔍 Analyser la tonalité", type="primary"):
-    if not chords_text.strip():
-        st.error("Veuillez entrer des accords")
-        st.stop()
+def pitch_class_histogram(chords):
+    hist = np.zeros(12)
+    for ch in chords:
+        try:
+            c = chord.Chord(ch)
+            for p in c.pitches:
+                pc = p.pitchClass
+                hist[pc] += 1
+        except:
+            continue
+    return hist / (hist.sum() + 1e-8)
 
-    # Nettoyage et parsing
-    lines = [line.strip() for line in chords_text.split("\n") if line.strip()]
+def correlation_score(hist, profile):
+    return np.corrcoef(hist, profile)[0, 1]
+
+def detect_key_with_confidence(chords):
+    if not chords:
+        return None, 0.0
+    hist = pitch_class_histogram(chords)
+    scores = []
+    for i in range(12):
+        shifted_major = np.roll(MAJOR_PROFILE, i)
+        shifted_minor = np.roll(MINOR_PROFILE, i)
+        score_maj = correlation_score(hist, shifted_major)
+        score_min = correlation_score(hist, shifted_minor)
+        scores.append((NOTES[i], 'major', score_maj))
+        scores.append((NOTES[i], 'minor', score_min))
+    best = max(scores, key=lambda x: x[2])
+    mode_fr = "Majeur" if best[1] == "major" else "Mineur"
+    return f"{best[0]} {mode_fr}", round(best[2], 3)
+
+def parse_chords(text):
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
     all_chords = []
-    
+    sections = []
+    current_section = []
     for line in lines:
-        # Gérer les séparateurs courants
+        if line.startswith("#") or line == "":  # ligne vide = nouvelle section
+            if current_section:
+                sections.append(current_section)
+                current_section = []
+            continue
         for sep in ["|", ",", "-", "/"]:
             line = line.replace(sep, " ")
         chords = [c.strip() for c in line.split() if c.strip()]
+        current_section.extend(chords)
         all_chords.extend(chords)
+    if current_section:
+        sections.append(current_section)
+    return all_chords, sections
 
-    if not all_chords:
-        st.error("Aucun accord valide détecté")
-        st.stop()
+# ===================== INTERFACE =====================
+tab1, tab2, tab3 = st.tabs(["📝 Grille manuelle", "📁 Upload fichier accords", "🎤 Upload audio"])
 
-    # Création du stream music21
-    s = stream.Stream()
-    for ch in all_chords:
-        try:
-            # Ajouter des durées pour une meilleure analyse
-            c = chord.Chord(ch)
-            c.duration.quarterLength = 4.0  # blanche
-            s.append(c)
-        except Exception:
-            st.warning(f"Accord ignoré : {ch}")
+with tab1:
+    st.subheader("Saisie manuelle de grille d'accords")
+    example = "C G Am F\n\nG D Em Bm\n\nC G F C"
+    text = st.text_area("Collez votre grille (séparez les sections par une ligne vide)", example, height=200)
+    if st.button("Analyser (manuelle)", type="primary"):
+        all_chords, sections = parse_chords(text)
+        if all_chords:
+            global_key, conf = detect_key_with_confidence(all_chords)
+            st.success(f"**Tonalité globale : {global_key}** (confiance : {conf})")
+            if len(sections) > 1:
+                st.write("**Détection par sections :**")
+                for i, sec in enumerate(sections, 1):
+                    key, c = detect_key_with_confidence(sec)
+                    st.write(f"Section {i} ({len(sec)} accords) → **{key}** (confiance {c})")
 
-    if len(s) == 0:
-        st.error("Impossible de créer des accords valides")
-        st.stop()
+with tab2:
+    st.subheader("Upload fichier .txt ou .csv")
+    uploaded_file = st.file_uploader("Choisissez un fichier .txt ou .csv", type=["txt", "csv"])
+    if uploaded_file:
+        if uploaded_file.name.endswith(".csv"):
+            df = pd.read_csv(uploaded_file)
+            text = df.to_string(index=False)
+        else:
+            text = uploaded_file.read().decode("utf-8")
+        st.text_area("Contenu détecté", text[:500] + ("..." if len(text)>500 else ""), height=150)
+        if st.button("Analyser le fichier"):
+            all_chords, sections = parse_chords(text)
+            global_key, conf = detect_key_with_confidence(all_chords)
+            st.success(f"**Tonalité globale : {global_key}** (confiance : {conf})")
+            if len(sections) > 1:
+                for i, sec in enumerate(sections, 1):
+                    key, c = detect_key_with_confidence(sec)
+                    st.write(f"Section {i} → **{key}** (confiance {c})")
 
-    # Analyse avec l'algorithme de music21 (très puissant)
-    try:
-        key_result = s.analyze('key')
-        tonic = key_result.tonic.name
-        mode = key_result.mode  # 'major' ou 'minor'
-        
-        # Conversion en français
-        mode_fr = "Majeur" if mode == "major" else "Mineur"
-        tonalite = f"{tonic} {mode_fr}"
-
-        st.success(f"✅ **Tonalité détectée : {tonalite}**")
-        
-        # Informations supplémentaires
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Accords analysés", len(all_chords))
-        with col2:
-            st.metric("Dernier accord", all_chords[-1] if all_chords else "N/A")
-        
-        st.info(f"Music21 a utilisé un algorithme basé sur : profil des accords, cadence parfaite, fréquence de la tonique, sensible, etc.")
-
-        # Afficher la grille d'accords en notation romaine (optionnel)
-        if st.checkbox("Voir les degrés en notation romaine"):
+with tab3:
+    st.subheader("Upload fichier audio (MP3 / WAV)")
+    audio_file = st.file_uploader("Choisissez un fichier audio", type=["mp3", "wav", "ogg"])
+    duration_limit = st.slider("Durée max analysée (secondes)", 30, 180, 90)
+    
+    if audio_file and st.button("Analyser l'audio"):
+        with st.spinner("Analyse audio en cours... (peut prendre 10-30 secondes)"):
             try:
-                rn = roman.romanNumeralFromChord(s[0], key_result)
-                st.write("Exemple premier accord :", rn.figure)
-            except:
-                st.write("Impossible d'afficher les degrés")
+                y, sr = librosa.load(io.BytesIO(audio_file.read()), duration=duration_limit, sr=22050)
+                chroma = librosa.feature.chroma_cqt(y=y, sr=sr, bins_per_octave=24)
+                hist = np.mean(chroma, axis=1)
+                hist = hist / (hist.sum() + 1e-8)
+                
+                scores = []
+                for i in range(12):
+                    shifted_maj = np.roll(MAJOR_PROFILE, i)
+                    shifted_min = np.roll(MINOR_PROFILE, i)
+                    scores.append((NOTES[i], 'major', np.corrcoef(hist, shifted_maj)[0,1]))
+                    scores.append((NOTES[i], 'minor', np.corrcoef(hist, shifted_min)[0,1]))
+                
+                best = max(scores, key=lambda x: x[2])
+                mode_fr = "Majeur" if best[1] == "major" else "Mineur"
+                st.success(f"**Tonalité détectée par audio : {best[0]} {mode_fr}** (confiance : {round(best[2], 3)})")
+                st.metric("Durée analysée", f"{len(y)/sr:.1f} secondes")
+                
+            except Exception as e:
+                st.error(f"Erreur lors de l'analyse audio : {str(e)}")
 
-    except Exception as e:
-        st.error(f"Erreur pendant l'analyse : {str(e)}")
-
-st.caption("App basée sur music21 • Détection globale (pas section par section)")
+st.caption("App développée avec music21 + librosa • Profils Krumhansl-Schmuckler • Détection par sections activée")
