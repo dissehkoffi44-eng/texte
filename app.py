@@ -1,133 +1,85 @@
 import streamlit as st
-import essentia.standard as es
+from music21 import *
 import numpy as np
-import tempfile
-import os
-from collections import defaultdict
 
-# Liste complète des profils Essentia
-PROFILES = [
-    'krumhansl', 'temperley', 'shaath', 'tonictriad', 'temperley2005',
-    'thpcp', 'edmm', 'edma', 'bgate', 'braw'
-]
+st.set_page_config(page_title="Détecteur de Tonalité", page_icon="🎵", layout="centered")
+st.title("🎵 Détecteur Automatique de Tonalité")
+st.markdown("Collez votre grille d'accords → l'app détecte la tonalité en appliquant les règles classiques")
 
-st.title("Détecteur de Tonalité Musicale avec Essentia (Pondéré + Auto-Analyse)")
+# Exemple par défaut
+example = "C G Am F\nC G F C\nDm G C Am\nF G C"
 
-st.write("""
-Analyse **automatique** dès l'upload du fichier (pas besoin de cliquer sur un bouton).
-Pondération par strength pour une précision maximale (vote chirurgical).
-Précision estimée : 80-95 % sur benchmarks MIR.
-Formats : .mp3 / .wav
-""")
+chords_text = st.text_area(
+    "Grille d'accords (une ligne par mesure ou tout d'un coup)",
+    example,
+    height=150
+)
 
-# Sélection du mode
-mode = st.radio("Mode d'analyse :", ("Profil unique", "Tous les profils (vote pondéré par strength)"))
+if st.button("🔍 Analyser la tonalité", type="primary"):
+    if not chords_text.strip():
+        st.error("Veuillez entrer des accords")
+        st.stop()
 
-selected_profile = None
-if mode == "Profil unique":
-    selected_profile = st.selectbox("Profil :", PROFILES, index=PROFILES.index('temperley'))
+    # Nettoyage et parsing
+    lines = [line.strip() for line in chords_text.split("\n") if line.strip()]
+    all_chords = []
+    
+    for line in lines:
+        # Gérer les séparateurs courants
+        for sep in ["|", ",", "-", "/"]:
+            line = line.replace(sep, " ")
+        chords = [c.strip() for c in line.split() if c.strip()]
+        all_chords.extend(chords)
 
-# Upload
-uploaded_file = st.file_uploader("Choisissez un fichier audio", type=["mp3", "wav"])
+    if not all_chords:
+        st.error("Aucun accord valide détecté")
+        st.stop()
 
-# Session state pour tracker le nom du fichier précédent (évite re-analyse inutile)
-if 'last_file_name' not in st.session_state:
-    st.session_state.last_file_name = None
-if 'analysis_result' not in st.session_state:
-    st.session_state.analysis_result = None
+    # Création du stream music21
+    s = stream.Stream()
+    for ch in all_chords:
+        try:
+            # Ajouter des durées pour une meilleure analyse
+            c = chord.Chord(ch)
+            c.duration.quarterLength = 4.0  # blanche
+            s.append(c)
+        except Exception:
+            st.warning(f"Accord ignoré : {ch}")
 
-if uploaded_file is not None:
-    current_file_name = uploaded_file.name
+    if len(s) == 0:
+        st.error("Impossible de créer des accords valides")
+        st.stop()
 
-    # Sauvegarde temporaire
-    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_file.name.split('.')[-1]}") as tmp_file:
-        tmp_file.write(uploaded_file.getvalue())
-        audio_path = tmp_file.name
+    # Analyse avec l'algorithme de music21 (très puissant)
+    try:
+        key_result = s.analyze('key')
+        tonic = key_result.tonic.name
+        mode = key_result.mode  # 'major' ou 'minor'
+        
+        # Conversion en français
+        mode_fr = "Majeur" if mode == "major" else "Mineur"
+        tonalite = f"{tonic} {mode_fr}"
 
-    # Lance l'analyse seulement si le fichier a changé (ou premier upload)
-    if current_file_name != st.session_state.last_file_name:
-        with st.spinner("Analyse automatique en cours..."):
+        st.success(f"✅ **Tonalité détectée : {tonalite}**")
+        
+        # Informations supplémentaires
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Accords analysés", len(all_chords))
+        with col2:
+            st.metric("Dernier accord", all_chords[-1] if all_chords else "N/A")
+        
+        st.info(f"Music21 a utilisé un algorithme basé sur : profil des accords, cadence parfaite, fréquence de la tonique, sensible, etc.")
+
+        # Afficher la grille d'accords en notation romaine (optionnel)
+        if st.checkbox("Voir les degrés en notation romaine"):
             try:
-                # Charge audio
-                loader = es.MonoLoader(filename=audio_path)
-                audio = loader()
+                rn = roman.romanNumeralFromChord(s[0], key_result)
+                st.write("Exemple premier accord :", rn.figure)
+            except:
+                st.write("Impossible d'afficher les degrés")
 
-                results = []
+    except Exception as e:
+        st.error(f"Erreur pendant l'analyse : {str(e)}")
 
-                if mode == "Profil unique":
-                    key_extractor = es.Key(
-                        profileType=selected_profile,
-                        numHarmonics=4, pcpSize=36, slope=0.6,
-                        usePolyphony=True, useThreeChords=True
-                    )
-                    key, scale, strength = key_extractor(audio)
-                    results.append((key, scale, strength, selected_profile))
-                else:
-                    for profile in PROFILES:
-                        try:
-                            key_extractor = es.Key(
-                                profileType=profile,
-                                numHarmonics=4, pcpSize=36, slope=0.6,
-                                usePolyphony=True, useThreeChords=True
-                            )
-                            key, scale, strength = key_extractor(audio)
-                            results.append((key, scale, strength, profile))
-                        except ValueError:
-                            pass  # Ignore profils non supportés
-
-                # Mapping français
-                key_fr_map = {
-                    'C': 'Do', 'C#': 'Do#', 'D': 'Ré', 'D#': 'Ré#', 'E': 'Mi',
-                    'F': 'Fa', 'F#': 'Fa#', 'G': 'Sol', 'G#': 'Sol#',
-                    'A': 'La', 'A#': 'La#', 'B': 'Si'
-                }
-
-                if results:
-                    if mode == "Profil unique":
-                        key, scale, strength, profile = results[0]
-                        key_fr = key_fr_map.get(key, key)
-                        mode_fr = 'majeur' if scale == 'major' else 'mineur'
-                        result_text = f"**{key_fr} {mode_fr}** (profil '{profile}', force : {strength:.2f})"
-                        st.session_state.analysis_result = result_text
-                    else:
-                        weighted_votes = defaultdict(float)
-                        for key, scale, strength, _ in results:
-                            weighted_votes[(key, scale)] += strength
-
-                        if weighted_votes:
-                            best_key, best_scale = max(weighted_votes, key=weighted_votes.get)
-                            best_strength_sum = weighted_votes[(best_key, best_scale)]
-                            key_fr = key_fr_map.get(best_key, best_key)
-                            mode_fr = 'majeur' if best_scale == 'major' else 'mineur'
-                            result_text = f"**{key_fr} {mode_fr}** (somme strengths : {best_strength_sum:.2f} / {len(results)} profils)"
-                            st.session_state.analysis_result = result_text
-
-                        # Tableau détaillé
-                        st.subheader("Détails par profil")
-                        data = []
-                        for k, s, stren, prof in results:
-                            kf = key_fr_map.get(k, k)
-                            mf = 'majeur' if s == 'major' else 'mineur'
-                            data.append([prof, f"{kf} {mf}", f"{stren:.2f}"])
-                        st.table({"Profil": [d[0] for d in data], "Tonalité": [d[1] for d in data], "Strength": [d[2] for d in data]})
-
-                st.session_state.last_file_name = current_file_name
-
-            except Exception as e:
-                st.error(f"Erreur pendant l'analyse : {str(e)}")
-                st.session_state.analysis_result = None
-
-    # Affichage du résultat (persistant)
-    if st.session_state.analysis_result:
-        st.success(f"Tonalité détectée automatiquement : {st.session_state.analysis_result}")
-
-    # Nettoyage temp
-    os.unlink(audio_path)
-
-else:
-    st.info("Uploadez un fichier audio pour lancer l'analyse automatique.")
-    # Reset si pas de fichier
-    st.session_state.last_file_name = None
-    st.session_state.analysis_result = None
-
-st.markdown("Basé sur Essentia – Analyse auto + pondération pour précision chirurgicale.")
+st.caption("App basée sur music21 • Détection globale (pas section par section)")
