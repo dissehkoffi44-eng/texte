@@ -177,7 +177,7 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None):
         seg_scores = vote_profiles(cqt_seg, cens_seg, bass_seg)
         best_key = max(seg_scores, key=seg_scores.get)
 
-        if seg_scores[best_key] >= 0.64:  # seuil un peu plus bas pour granularité fine
+        if seg_scores[best_key] >= 0.8:  # seuil un peu plus bas pour granularité fine
             # poids plus fort au centre du morceau
             weight = 1.45 if 0.18 < (start_s / duration) < 0.82 else 1.0
             segment_votes[best_key] += seg_scores[best_key] * weight
