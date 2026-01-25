@@ -1,5 +1,5 @@
-# RCDJ228 MUSIC SNIPER M5 - HYBRIDE 2026 (version corrigée avec cache + session_state)
-# Moteur M4 + Timeline fine M3 + UI/Telegram premium M4
+# RCDJ228 MUSIC SNIPER M5 - HYBRIDE 2026 (version avec poids dynamique + bass protégé)
+# Moteur M4 + Timeline fine M3 + UI/Telegram premium M4 + poids adaptatif
 
 import streamlit as st
 import librosa
@@ -50,20 +50,21 @@ PROFILES = {
                   "minor": [18.16,0.69,12.99,13.34,1.07,11.15,1.38,17.2,13.62,1.27,12.79,2.4]}
 }
 
-WEIGHTS = {"global": 0.55, "segments": 0.35, "bass_bonus": 0.10}
+# Poids de base (sera ajusté dynamiquement si besoin)
+BASE_WEIGHTS = {"global": 0.55, "segments": 0.35, "bass_bonus": 0.10}
 
 # ────────────────────────────────────────────────
 # INITIALISATION SESSION STATE
 # ────────────────────────────────────────────────
 if "analysis_results" not in st.session_state:
-    st.session_state.analysis_results = {}      # {filename: data}
+    st.session_state.analysis_results = {}
 if "processed_files" not in st.session_state:
     st.session_state.processed_files = set()
 if "global_progress" not in st.session_state:
     st.session_state.global_progress = 0.0
 
 # ────────────────────────────────────────────────
-# STYLES CSS
+# STYLES CSS (inchangé)
 # ────────────────────────────────────────────────
 st.markdown("""
     <style>
@@ -123,6 +124,7 @@ def vote_profiles(chroma, chroma_cens, bass_chroma):
                 corr_cens = np.corrcoef(cens, np.roll(profile[mode], i))[0,1]
                 combined  = 0.68 * corr_cqt + 0.32 * corr_cens
 
+                # Bonus bass conservé et important pour l'électro
                 bonus = (
                     bv[i]              * 0.42 +
                     cv[(i+7)%12]       * 0.19 +
@@ -131,7 +133,10 @@ def vote_profiles(chroma, chroma_cens, bass_chroma):
                 scores[f"{NOTES_LIST[i]} {mode}"] += (combined + bonus) / len(PROFILES)
     return scores
 
-def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
+def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78, weights=None):
+    if weights is None:
+        weights = BASE_WEIGHTS.copy()
+
     ext = file_name.lower().split('.')[-1]
     sr_target = 22050
 
@@ -221,8 +226,8 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
     final_scores = Counter()
     for k in set(global_scores) | set(seg_norm):
         final_scores[k] = (
-            global_scores.get(k, 0) * WEIGHTS["global"] +
-            seg_norm.get(k, 0)      * WEIGHTS["segments"]
+            global_scores.get(k, 0) * weights["global"] +
+            seg_norm.get(k, 0)      * weights["segments"]
         )
 
     best_key, best_raw = final_scores.most_common(1)[0]
@@ -257,10 +262,12 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
         "valid_segments": valid_segments,
         "duration": round(duration, 1),
         "retention_pct": (valid_segments / len(segments_starts) * 100) if len(segments_starts) > 0 else 0,
-        "avg_retained_score": np.mean(retained_scores) if retained_scores else 0
+        "avg_retained_score": np.mean(retained_scores) if retained_scores else 0,
+        "used_weights": weights,           # pour debug/affichage
+        "used_threshold": threshold
     }
 
-    # Telegram Report (inchangé)
+    # Telegram Report (inchangé) ..............................................
     if TELEGRAM_TOKEN and CHAT_ID:
         try:
             df_tl = pd.DataFrame(timeline)
@@ -286,6 +293,7 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
                 f"**Tempo**  `{result['tempo']} BPM`\n"
                 f"**Accordage**  `{result['tuning_hz']} Hz  ({result['tuning_cents']:+.1f}¢)`\n"
                 f"**Segments valides**  `{valid_segments}`\n"
+                f"Poids global/seg/bass: {weights['global']:.2f}/{weights['segments']:.2f}/{weights['bass_bonus']:.2f}\n"
                 f"{mod_text}\n━━━━━━━━━━━━━━━━━"
             )
 
@@ -307,7 +315,7 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
     return result
 
 # ────────────────────────────────────────────────
-# VERSION CACHÉE (clé du gain de performance)
+# VERSION CACHÉE
 # ────────────────────────────────────────────────
 @st.cache_data(
     show_spinner="Analyse M5 en cours...",
@@ -315,9 +323,9 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
     persist="disk",
     ttl=None
 )
-def cached_process_audio(file_bytes, file_name, threshold):
-    # On passe progress_cb=None car on ne peut pas sérialiser les callbacks
-    return process_audio_m5(file_bytes, file_name, None, threshold)
+def cached_process_audio(file_bytes, file_name, threshold, weights_json):
+    weights = json.loads(weights_json)
+    return process_audio_m5(file_bytes, file_name, None, threshold, weights)
 
 def get_chord_test_js(btn_id, key_str):
     note, mode = key_str.split()
@@ -354,7 +362,6 @@ with header_col2:
     if st.session_state.analysis_results:
         st.caption(f"{len(st.session_state.analysis_results)} track(s) analysée(s)")
 
-# Barre de progression globale (placeholder)
 prog_container = st.empty()
 prog_text = st.empty()
 
@@ -365,17 +372,26 @@ if "last_total" not in st.session_state:
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2569/2569107.png", width=100)
     st.header("Sniper M5")
-    st.caption("Hybride 2026 • Cache + Timeline fine + boost conf ≥80%")
+    st.caption("Hybride 2026 • Cache + Timeline + poids adaptatif + bass protégé")
 
     st.subheader("Réglages fins")
-    SEGMENT_THRESHOLD = st.slider(
-        "Seuil confiance segment",
+    SEGMENT_THRESHOLD_BASE = st.slider(
+        "Seuil confiance segment (base)",
         min_value=0.55,
         max_value=0.90,
         value=0.78,
         step=0.01,
         format="%.2f",
-        help="Plus haut = plus fiable mais timeline plus vide"
+        help="Augmenté automatiquement si poids global < 0.45"
+    )
+
+    w_global_user = st.slider(
+        "Poids analyse globale (base)",
+        min_value=0.25,
+        max_value=0.80,
+        value=0.55,
+        step=0.05,
+        format="%.2f"
     )
 
     st.markdown("---")
@@ -397,14 +413,12 @@ if uploaded_files:
     total = len(uploaded_files)
     new_files = [f for f in uploaded_files if f.name not in st.session_state.processed_files]
 
-    # Mise à jour barre globale seulement si nouveau total ou nouveaux fichiers
     if total != st.session_state.last_total or new_files:
         st.session_state.global_progress = len(st.session_state.processed_files) / total if total > 0 else 0
         prog_container.progress(st.session_state.global_progress)
         prog_text.markdown(f"**Prêt — {len(st.session_state.processed_files)}/{total} déjà analysé(s)**")
 
     results_container = st.container()
-
     current_idx = len(st.session_state.processed_files)
 
     for file in uploaded_files:
@@ -412,7 +426,6 @@ if uploaded_files:
 
         if fname in st.session_state.processed_files:
             data = st.session_state.analysis_results.get(fname)
-            # On affiche quand même le rapport (déjà calculé)
         else:
             current_idx += 1
             percent = current_idx / total
@@ -428,7 +441,34 @@ if uploaded_files:
                     inner_prog.progress(p/100)
                     inner_text.code(msg, language="text")
 
-                data = cached_process_audio(file.getvalue(), fname, SEGMENT_THRESHOLD)
+                # ─── Logique d'ajustement dynamique ───────────────────────────────
+                w_global = w_global_user
+                w_segments = 1.0 - w_global - BASE_WEIGHTS["bass_bonus"]
+                if w_segments < 0:
+                    w_segments = 0.25
+                    w_global = 0.65
+
+                # Protection du poids bass + ajustement seuil si global trop faible
+                bass_weight = max(0.05, min(0.12, BASE_WEIGHTS["bass_bonus"]))
+                threshold_used = SEGMENT_THRESHOLD_BASE
+
+                if w_global < 0.45:
+                    threshold_used = max(threshold_used, 0.81)   # 0.81–0.84 typique
+                    # on réduit un peu les segments pour compenser
+                    w_segments *= 0.92
+
+                weights_used = {
+                    "global": round(w_global, 3),
+                    "segments": round(w_segments, 3),
+                    "bass_bonus": bass_weight
+                }
+
+                data = cached_process_audio(
+                    file.getvalue(),
+                    fname,
+                    threshold_used,
+                    json.dumps(weights_used)   # pour compatibilité cache
+                )
 
                 if data:
                     st.session_state.analysis_results[fname] = data
@@ -437,7 +477,7 @@ if uploaded_files:
                 else:
                     status.update(label=f"Échec — {fname}", state="error")
 
-        # Affichage du rapport (pour tous les fichiers)
+        # Affichage du rapport
         if data and fname in st.session_state.analysis_results:
             with results_container:
                 st.markdown(f"<div class='file-header'>RAPPORT M5 → {data['name']}</div>", unsafe_allow_html=True)
@@ -453,11 +493,12 @@ if uploaded_files:
                 </div>
                 """, unsafe_allow_html=True)
 
+                w = data["used_weights"]
                 st.markdown(f"""
                 <div class="stats-box">
-                    Seuil : <b>{SEGMENT_THRESHOLD:.2f}</b>  
-                      Segments retenus : <b>{data['valid_segments']}</b> / ~{len(np.arange(0, max(0.1, data['duration'] - 8), 3)):.0f} 
-                    ({data['retention_pct']:.1f} %)  
+                    Poids utilisés : global <b>{w['global']:.2f}</b>  •  segments <b>{w['segments']:.2f}</b>  •  bass <b>{w['bass_bonus']:.2f}</b><br>
+                    Seuil segment : <b>{data['used_threshold']:.2f}</b>  
+                      Segments retenus : <b>{data['valid_segments']}</b>  
                       Score moyen retenus : <b>{data['avg_retained_score']:.3f}</b>
                 </div>
                 """, unsafe_allow_html=True)
@@ -492,7 +533,6 @@ if uploaded_files:
 
                 st.markdown("---")
 
-    # Fin du traitement → on met à jour la progression finale
     st.session_state.global_progress = 1.0
     prog_container.progress(1.0)
     prog_text.success(f"**Mission terminée — {total} track(s) traitée(s)**")
