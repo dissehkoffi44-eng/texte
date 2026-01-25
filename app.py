@@ -1,4 +1,4 @@
-# RCDJ228 MUSIC SNIPER M5 - HYBRIDE 2026
+# RCDJ228 MUSIC SNIPER M5 - HYBRIDE 2026 (avec seuil configurable)
 # Moteur M4 + Timeline fine M3 + UI/Telegram premium M4
 
 import streamlit as st
@@ -53,7 +53,7 @@ PROFILES = {
 WEIGHTS = {"global": 0.55, "segments": 0.35, "bass_bonus": 0.10}
 
 # ────────────────────────────────────────────────
-# STYLES CSS (M4 premium)
+# STYLES CSS
 # ────────────────────────────────────────────────
 st.markdown("""
     <style>
@@ -77,11 +77,15 @@ st.markdown("""
         border: 1px solid #30363d; height: 100%; transition: all 0.25s;
     }
     .metric-box:hover { transform: translateY(-4px); box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+    .stats-box {
+        background: #1a2332; border-radius: 12px; padding: 16px; margin: 16px 0;
+        border: 1px solid #2d3748; font-family: 'JetBrains Mono'; font-size: 0.95em;
+    }
     </style>
 """, unsafe_allow_html=True)
 
 # ────────────────────────────────────────────────
-# FONCTIONS TECHNIQUES (M4 amélioré)
+# FONCTIONS TECHNIQUES
 # ────────────────────────────────────────────────
 
 def butter_lowpass(y, sr, cutoff=160):
@@ -110,14 +114,14 @@ def vote_profiles(chroma, chroma_cens, bass_chroma):
                 combined  = 0.68 * corr_cqt + 0.32 * corr_cens
 
                 bonus = (
-                    bv[i]              * 0.42 +     # racine
-                    cv[(i+7)%12]       * 0.19 +     # quinte
-                    (cv[i] + bv[i])/2  * 0.14       # renfort racine
+                    bv[i]              * 0.42 +
+                    cv[(i+7)%12]       * 0.19 +
+                    (cv[i] + bv[i])/2  * 0.14
                 )
                 scores[f"{NOTES_LIST[i]} {mode}"] += (combined + bonus) / len(PROFILES)
     return scores
 
-def process_audio_m5(file_bytes, file_name, progress_cb=None):
+def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
     ext = file_name.lower().split('.')[-1]
     sr_target = 22050
 
@@ -143,25 +147,26 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None):
     tuning_offset = librosa.estimate_tuning(y=y, sr=sr)
     y_filt = apply_precision_filters(y, sr)
 
-    # ── Analyse globale
+    # Analyse globale
     chroma_cqt_glob  = np.mean(librosa.feature.chroma_cqt(y=y_filt, sr=sr, tuning=tuning_offset), axis=1)
     chroma_cens_glob = np.mean(librosa.feature.chroma_cens(y=y_filt, sr=sr, tuning=tuning_offset), axis=1)
     bass_glob        = np.mean(librosa.feature.chroma_cqt(y=butter_lowpass(y, sr), sr=sr), axis=1)
     global_scores    = vote_profiles(chroma_cqt_glob, chroma_cens_glob, bass_glob)
 
-    # ── Analyse segments fins (M3 style – granularité accrue)
-    seg_duration = 8.0          # fenêtre d'analyse
-    step         = 3.0          # pas → ~3s entre chaque mesure
+    # Analyse segments
+    seg_duration = 8.0
+    step         = 3.0
     segments_starts = np.arange(0, max(0.1, duration - seg_duration), step)
 
     segment_votes = Counter()
     timeline = []
     valid_segments = 0
+    retained_scores = []
 
     for idx, start_s in enumerate(segments_starts):
         if progress_cb:
             prog = int((idx + 1) / len(segments_starts) * 100)
-            progress_cb(prog, f"Segment {idx+1}/{len(segments_starts)}  —  {start_s:.1f}s")
+            progress_cb(prog, f"Segment {idx+1}/{len(segments_starts)} — {start_s:.1f}s")
 
         seg_start_idx = int(start_s * sr)
         seg_end_idx   = int((start_s + seg_duration) * sr)
@@ -177,8 +182,7 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None):
         seg_scores = vote_profiles(cqt_seg, cens_seg, bass_seg)
         best_key = max(seg_scores, key=seg_scores.get)
 
-        if seg_scores[best_key] >= 0.8:  # seuil un peu plus bas pour granularité fine
-            # poids plus fort au centre du morceau
+        if seg_scores[best_key] >= threshold:
             weight = 1.45 if 0.18 < (start_s / duration) < 0.82 else 1.0
             segment_votes[best_key] += seg_scores[best_key] * weight
             timeline.append({
@@ -187,11 +191,12 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None):
                 "score": seg_scores[best_key]
             })
             valid_segments += 1
+            retained_scores.append(seg_scores[best_key])
 
     if not segment_votes and not global_scores:
         return None
 
-    # ── Score final pondéré (M4 style)
+    # Score final pondéré
     total_seg = sum(segment_votes.values()) or 1
     seg_norm = {k: v / total_seg for k,v in segment_votes.items()}
 
@@ -206,7 +211,7 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None):
     max_raw = max(final_scores.values()) if final_scores else 1
     confidence = min(99, int(100 * best_raw / max_raw * 1.18))
 
-    # ── Détection modulation (M4)
+    # Détection modulation
     modulation = None
     if len(timeline) >= 8:
         mid = len(timeline) // 2
@@ -233,10 +238,13 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None):
         "timeline": timeline,
         "chroma": chroma_cqt_glob.tolist(),
         "valid_segments": valid_segments,
-        "duration": round(duration, 1)
+        "duration": round(duration, 1),
+        # Stats supplémentaires pour affichage
+        "retention_pct": (valid_segments / len(segments_starts) * 100) if len(segments_starts) > 0 else 0,
+        "avg_retained_score": np.mean(retained_scores) if retained_scores else 0
     }
 
-    # ── Telegram Report (style M4)
+    # Telegram
     if TELEGRAM_TOKEN and CHAT_ID:
         try:
             df_tl = pd.DataFrame(timeline)
@@ -305,7 +313,7 @@ def get_chord_test_js(btn_id, key_str):
     """
 
 # ────────────────────────────────────────────────
-# INTERFACE
+# INTERFACE PRINCIPALE
 # ────────────────────────────────────────────────
 st.title("🔫 RCDJ228 MUSIC SNIPER M5 — Précision & Granularité 2026")
 
@@ -313,6 +321,30 @@ uploaded_files = st.file_uploader("Déposez vos tracks (mp3, wav, flac, m4a)",
                                  type=['mp3','wav','flac','m4a'], 
                                  accept_multiple_files=True)
 
+# Sidebar avec contrôle du seuil
+with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/2569/2569107.png", width=100)
+    st.header("Sniper M5")
+    st.caption("Hybride 2026 • Précision M4 + Timeline fine")
+
+    st.subheader("Réglages fins")
+    SEGMENT_THRESHOLD = st.slider(
+        "Seuil confiance segment",
+        min_value=0.55,
+        max_value=0.90,
+        value=0.78,
+        step=0.01,
+        format="%.2f",
+        help="Plus haut = plus fiable mais timeline plus vide\nPlus bas = plus de points mais risque de bruit"
+    )
+
+    if st.button("🔄 Reset cache & relancer"):
+        st.cache_data.clear()
+        st.rerun()
+
+# ────────────────────────────────────────────────
+# Traitement des fichiers
+# ────────────────────────────────────────────────
 if uploaded_files:
     total = len(uploaded_files)
     progress_global = st.progress(0)
@@ -330,7 +362,7 @@ if uploaded_files:
             def upd_prog(p, msg):
                 inner_prog.progress(p/100)
                 inner_text.code(msg, language="text")
-            data = process_audio_m5(file.getvalue(), file.name, upd_prog)
+            data = process_audio_m5(file.getvalue(), file.name, upd_prog, threshold=SEGMENT_THRESHOLD)
             status.update(label=f"Terminé — {file.name}", state="complete", expanded=False)
 
         if data:
@@ -345,6 +377,16 @@ if uploaded_files:
                         CAMELOT <b>{data['camelot']}</b>  •  CONFIANCE <b>{data['conf']}%</b>
                     </p>
                     {f"<div class='modulation-alert'>MODULATION → {data['modulation'].upper()} ({data['target_camelot']})</div>" if data['modulation'] else ""}
+                </div>
+                """, unsafe_allow_html=True)
+
+                # Stats segments
+                st.markdown(f"""
+                <div class="stats-box">
+                    Seuil utilisé : <b>{SEGMENT_THRESHOLD:.2f}</b><br>
+                    Segments retenus : <b>{data['valid_segments']}</b> / {len(np.arange(0, max(0.1, data['duration'] - 8), 3)):.0f} 
+                    ({data['retention_pct']:.1f} %)<br>
+                    Score moyen segments valides : <b>{data['avg_retained_score']:.3f}</b>
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -380,11 +422,3 @@ if uploaded_files:
 
     progress_global.progress(1.0)
     status_global.success(f"**Mission terminée — {total} track(s) analysée(s)**")
-
-with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/2569/2569107.png", width=100)
-    st.header("Sniper M5")
-    st.caption("Hybride 2026 • Précision M4 + Timeline fine")
-    if st.button("🔄 Reset & Relancer"):
-        st.cache_data.clear()
-        st.rerun()
