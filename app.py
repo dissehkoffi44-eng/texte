@@ -1,4 +1,4 @@
-# RCDJ228 MUSIC SNIPER M5 - HYBRIDE 2026 (avec seuil configurable + boost segments très confiants)
+# RCDJ228 MUSIC SNIPER M5 - HYBRIDE 2026 (version corrigée avec cache + session_state)
 # Moteur M4 + Timeline fine M3 + UI/Telegram premium M4
 
 import streamlit as st
@@ -51,6 +51,16 @@ PROFILES = {
 }
 
 WEIGHTS = {"global": 0.55, "segments": 0.35, "bass_bonus": 0.10}
+
+# ────────────────────────────────────────────────
+# INITIALISATION SESSION STATE
+# ────────────────────────────────────────────────
+if "analysis_results" not in st.session_state:
+    st.session_state.analysis_results = {}      # {filename: data}
+if "processed_files" not in st.session_state:
+    st.session_state.processed_files = set()
+if "global_progress" not in st.session_state:
+    st.session_state.global_progress = 0.0
 
 # ────────────────────────────────────────────────
 # STYLES CSS
@@ -183,10 +193,8 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
         best_key = max(seg_scores, key=seg_scores.get)
 
         if seg_scores[best_key] >= threshold:
-            # Poids de base (milieu du morceau plus important)
             weight = 1.45 if 0.18 < (start_s / duration) < 0.82 else 1.0
             
-            # Boost progressif selon la confiance
             conf = seg_scores[best_key]
             if conf >= 0.88:
                 weight *= 2.2
@@ -207,7 +215,6 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
     if not segment_votes and not global_scores:
         return None
 
-    # Score final pondéré
     total_seg = sum(segment_votes.values()) or 1
     seg_norm = {k: v / total_seg for k,v in segment_votes.items()}
 
@@ -222,7 +229,6 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
     max_raw = max(final_scores.values()) if final_scores else 1
     confidence = min(99, int(100 * best_raw / max_raw * 1.18))
 
-    # Détection modulation
     modulation = None
     if len(timeline) >= 8:
         mid = len(timeline) // 2
@@ -254,7 +260,7 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
         "avg_retained_score": np.mean(retained_scores) if retained_scores else 0
     }
 
-    # Telegram Report
+    # Telegram Report (inchangé)
     if TELEGRAM_TOKEN and CHAT_ID:
         try:
             df_tl = pd.DataFrame(timeline)
@@ -300,6 +306,19 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
     gc.collect()
     return result
 
+# ────────────────────────────────────────────────
+# VERSION CACHÉE (clé du gain de performance)
+# ────────────────────────────────────────────────
+@st.cache_data(
+    show_spinner="Analyse M5 en cours...",
+    hash_funcs={bytes: id},
+    persist="disk",
+    ttl=None
+)
+def cached_process_audio(file_bytes, file_name, threshold):
+    # On passe progress_cb=None car on ne peut pas sérialiser les callbacks
+    return process_audio_m5(file_bytes, file_name, None, threshold)
+
 def get_chord_test_js(btn_id, key_str):
     note, mode = key_str.split()
     return f"""
@@ -325,16 +344,28 @@ def get_chord_test_js(btn_id, key_str):
 # ────────────────────────────────────────────────
 # INTERFACE
 # ────────────────────────────────────────────────
-st.title("🔫 RCDJ228 MUSIC SNIPER M5 — Précision & Granularité 2026")
+header_col1, header_col2 = st.columns([6, 2])
 
-uploaded_files = st.file_uploader("Déposez vos tracks (mp3, wav, flac, m4a)", 
-                                 type=['mp3','wav','flac','m4a'], 
-                                 accept_multiple_files=True)
+with header_col1:
+    st.title("🔫 RCDJ228 MUSIC SNIPER M5 — Précision & Granularité 2026")
 
+with header_col2:
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.session_state.analysis_results:
+        st.caption(f"{len(st.session_state.analysis_results)} track(s) analysée(s)")
+
+# Barre de progression globale (placeholder)
+prog_container = st.empty()
+prog_text = st.empty()
+
+if "last_total" not in st.session_state:
+    st.session_state.last_total = 0
+
+# Sidebar
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2569/2569107.png", width=100)
     st.header("Sniper M5")
-    st.caption("Hybride 2026 • Précision M4 + Timeline fine + boost conf ≥80%")
+    st.caption("Hybride 2026 • Cache + Timeline fine + boost conf ≥80%")
 
     st.subheader("Réglages fins")
     SEGMENT_THRESHOLD = st.slider(
@@ -344,38 +375,71 @@ with st.sidebar:
         value=0.78,
         step=0.01,
         format="%.2f",
-        help="Plus haut = plus fiable mais timeline plus vide\nPlus bas = plus de points mais risque de bruit"
+        help="Plus haut = plus fiable mais timeline plus vide"
     )
 
-    if st.button("🔄 Reset cache & relancer"):
-        st.cache_data.clear()
+    st.markdown("---")
+    if st.button("🗑️ Tout effacer et recommencer", type="primary"):
+        st.session_state.analysis_results = {}
+        st.session_state.processed_files = set()
+        st.session_state.global_progress = 0.0
+        st.session_state.last_total = 0
         st.rerun()
 
+uploaded_files = st.file_uploader("Déposez vos tracks (mp3, wav, flac, m4a)", 
+                                 type=['mp3','wav','flac','m4a'], 
+                                 accept_multiple_files=True)
+
 # ────────────────────────────────────────────────
-# Traitement
+# TRAITEMENT
 # ────────────────────────────────────────────────
 if uploaded_files:
     total = len(uploaded_files)
-    progress_global = st.progress(0)
-    status_global = st.empty()
-    results = st.container()
+    new_files = [f for f in uploaded_files if f.name not in st.session_state.processed_files]
 
-    for idx, file in enumerate(uploaded_files):
-        percent = (idx + 1) / total
-        progress_global.progress(percent)
-        status_global.markdown(f"**Analyse {idx+1}/{total}** — {file.name}")
+    # Mise à jour barre globale seulement si nouveau total ou nouveaux fichiers
+    if total != st.session_state.last_total or new_files:
+        st.session_state.global_progress = len(st.session_state.processed_files) / total if total > 0 else 0
+        prog_container.progress(st.session_state.global_progress)
+        prog_text.markdown(f"**Prêt — {len(st.session_state.processed_files)}/{total} déjà analysé(s)**")
 
-        with st.status(f"Scan M5 → {file.name}", expanded=True) as status:
-            inner_prog = st.progress(0)
-            inner_text = st.empty()
-            def upd_prog(p, msg):
-                inner_prog.progress(p/100)
-                inner_text.code(msg, language="text")
-            data = process_audio_m5(file.getvalue(), file.name, upd_prog, threshold=SEGMENT_THRESHOLD)
-            status.update(label=f"Terminé — {file.name}", state="complete", expanded=False)
+    results_container = st.container()
 
-        if data:
-            with results:
+    current_idx = len(st.session_state.processed_files)
+
+    for file in uploaded_files:
+        fname = file.name
+
+        if fname in st.session_state.processed_files:
+            data = st.session_state.analysis_results.get(fname)
+            # On affiche quand même le rapport (déjà calculé)
+        else:
+            current_idx += 1
+            percent = current_idx / total
+
+            prog_container.progress(percent)
+            prog_text.markdown(f"**Analyse {current_idx}/{total}** — {fname}")
+
+            with st.status(f"Scan M5 → {fname}", expanded=True) as status:
+                inner_prog = st.progress(0)
+                inner_text = st.empty()
+
+                def upd_prog(p, msg):
+                    inner_prog.progress(p/100)
+                    inner_text.code(msg, language="text")
+
+                data = cached_process_audio(file.getvalue(), fname, SEGMENT_THRESHOLD)
+
+                if data:
+                    st.session_state.analysis_results[fname] = data
+                    st.session_state.processed_files.add(fname)
+                    status.update(label=f"Terminé — {fname}", state="complete", expanded=False)
+                else:
+                    status.update(label=f"Échec — {fname}", state="error")
+
+        # Affichage du rapport (pour tous les fichiers)
+        if data and fname in st.session_state.analysis_results:
+            with results_container:
                 st.markdown(f"<div class='file-header'>RAPPORT M5 → {data['name']}</div>", unsafe_allow_html=True)
                 
                 bg = "linear-gradient(135deg, #065f46, #064e3b)" if data['conf'] > 87 else "linear-gradient(135deg, #1e293b, #0f172a)"
@@ -404,7 +468,7 @@ if uploaded_files:
                 with col2:
                     st.markdown(f"<div class='metric-box'><b>ACCORDAGE</b><br><span style='font-size:2.6em;color:#58a6ff;'>{data['tuning_hz']}</span><br>Hz ({data['tuning_cents']:+.1f}¢)</div>", unsafe_allow_html=True)
                 with col3:
-                    btn_id = f"chord_{idx}_{hash(file.name)}"
+                    btn_id = f"chord_{hash(fname)}"
                     components.html(f"""
                     <button id="{btn_id}" style="width:100%; height:110px; background:linear-gradient(45deg, #4F46E5, #7C3AED); color:white; border:none; border-radius:18px; font-size:1.3em; cursor:pointer; font-weight:bold;">TESTER L'ACCORD</button>
                     <script>{get_chord_test_js(btn_id, data['key'])}</script>
@@ -428,5 +492,12 @@ if uploaded_files:
 
                 st.markdown("---")
 
-    progress_global.progress(1.0)
-    status_global.success(f"**Mission terminée — {total} track(s) analysée(s)**")
+    # Fin du traitement → on met à jour la progression finale
+    st.session_state.global_progress = 1.0
+    prog_container.progress(1.0)
+    prog_text.success(f"**Mission terminée — {total} track(s) traitée(s)**")
+    st.session_state.last_total = total
+
+else:
+    prog_container.empty()
+    prog_text.empty()
