@@ -7,7 +7,6 @@ import plotly.graph_objects as go
 from collections import Counter
 import io
 import requests
-import gc
 import json
 import streamlit.components.v1 as components
 from scipy.signal import butter, lfilter
@@ -168,11 +167,11 @@ def solve_key(chroma_vector, global_dom_root=None):
     return {"key": best_key, "score": float(best_score)}
 
 # ────────────────────────────────────────────────
-#               ANALYSE COMPLÈTE
+#               ANALYSE COMPLÈTE (sans callback Streamlit)
 # ────────────────────────────────────────────────
 
 @st.cache_data(show_spinner=False)
-def analyze_full_engine(file_bytes, file_name, filter_type="original", _progress_callback=None):
+def analyze_full_engine(file_bytes, file_name, filter_type="original"):
     ext = file_name.rsplit('.', 1)[-1].lower()
     try:
         if ext == 'm4a':
@@ -216,9 +215,9 @@ def analyze_full_engine(file_bytes, file_name, filter_type="original", _progress
     total_seg = len(segments)
 
     for idx, start_sec in enumerate(segments):
-        if _progress_callback:
-            _progress_callback(int((idx / total_seg) * 100), f"Segment {start_sec}s / {int(duration)}s")
-
+        # ────────────────────────────────────────────────
+        #  Plus de callback ici → on ne touche plus aux widgets Streamlit
+        # ────────────────────────────────────────────────
         start_idx = int(start_sec * sr)
         end_idx   = int((start_sec + step) * sr)
         seg = y_filt[start_idx:end_idx]
@@ -390,30 +389,36 @@ if uploaded_files:
                 prog_bar = st.progress(0)
                 txt_status = st.empty()
 
-                def update_progress(pct, message):
-                    prog_bar.progress(pct / 100)
-                    txt_status.code(message)
+                # Étapes grossières de progression
+                txt_status.code("Chargement et prétraitement audio...")
+                prog_bar.progress(10)
 
                 data = analyze_full_engine(
                     file.getvalue(),
                     file.name,
-                    filter_type=filter_type,
-                    _progress_callback=update_progress
+                    filter_type=filter_type
                 )
+
+                if data is not None:
+                    txt_status.code("Finalisation des résultats...")
+                    prog_bar.progress(95)
+
+                # Fin → on passe à 100%
+                prog_bar.progress(100)
+                txt_status.code("Analyse terminée")
 
                 status.update(label=f"Terminé : {file.name}", state="complete", expanded=False)
 
         if data:
             with file_result_container:
-                # === PARTIE DÉBOGAGE AJOUTÉE ===
+                # === PARTIE DÉBOGAGE (à retirer quand tout est OK) ===
                 st.subheader(f"RÉSULTAT — {data['name']}")
-                st.json(data)                           # ← pour vérifier que data est bien remplie
+                st.json(data)
                 st.write("Tempo :", data["tempo"])
                 st.write("Key :", data["key"], data["camelot"])
                 st.write("Confiance :", data["conf"])
                 # === FIN DÉBOGAGE ===
 
-                # Affichage esthétique normal
                 st.markdown(f"<div class='file-header'>RÉSULTAT — {data['name']}</div>", unsafe_allow_html=True)
 
                 bg_grad = "linear-gradient(135deg, #0f172a, #1e3a8a)" if not data['modulation'] \
