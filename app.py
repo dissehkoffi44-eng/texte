@@ -6,28 +6,35 @@ import plotly.express as px
 import plotly.graph_objects as go
 from collections import Counter
 import io
-import requests
 import json
-import streamlit.components.v1 as components
+import os
+from pathlib import Path
+
 from scipy.signal import butter, lfilter
 from pydub import AudioSegment
-import os
+import streamlit.components.v1 as components
 
 # ────────────────────────────────────────────────
-#                CONFIGURATION & PATHS
+#                CONFIGURATION
 # ────────────────────────────────────────────────
 
-# Note : On ne force le path ffmpeg que s'il existe localement
-if os.path.exists(r'C:\ffmpeg\bin'):
-    os.environ["PATH"] += os.pathsep + r'C:\ffmpeg\bin'
+st.set_page_config(
+    page_title="DJ's Ear Pro Elite",
+    page_icon="🎧",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-st.set_page_config(page_title="DJ's Ear Pro Elite", page_icon="🎼", layout="wide")
+# Ajout ffmpeg si présent localement (Windows principalement)
+if os.name == 'nt' and (ffmpeg_path := Path(r"C:\ffmpeg\bin")).exists():
+    os.environ["PATH"] += os.pathsep + str(ffmpeg_path)
 
-TELEGRAM_TOKEN = st.secrets.get("TELEGRAM_TOKEN")
-CHAT_ID = st.secrets.get("CHAT_ID")
+# ────────────────────────────────────────────────
+#                CONSTANTES
+# ────────────────────────────────────────────────
 
-NOTES_LIST = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-NOTES_ORDER = [f"{n} {m}" for n in NOTES_LIST for m in ['major', 'minor']]
+NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+NOTES_ORDER = [f"{n} {m}" for n in NOTES for m in ['major', 'minor']]
 
 CAMELOT_MAP = {
     'C major': '8B', 'C# major': '3B', 'D major': '10B', 'D# major': '5B', 'E major': '12B', 'F major': '7B',
@@ -36,19 +43,13 @@ CAMELOT_MAP = {
     'F# minor': '11A', 'G minor': '6A', 'G# minor': '1A', 'A minor': '8A', 'A# minor': '3A', 'B minor': '10A'
 }
 
+# Profils de tonalité (Krumhansl le plus utilisé et fiable)
 PROFILES = {
     "krumhansl": {
         "major": [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88],
         "minor": [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
     },
-    "temperley": {
-        "major": [5.0, 2.0, 3.5, 2.0, 4.5, 4.0, 2.0, 4.5, 2.0, 3.5, 1.5, 4.0],
-        "minor": [5.0, 2.0, 3.5, 4.5, 2.0, 4.0, 2.0, 4.5, 3.5, 2.0, 1.5, 4.0]
-    },
-    "bellman": {
-        "major": [16.8, 0.86, 12.95, 1.41, 13.49, 11.93, 1.25, 16.74, 1.56, 12.81, 1.89, 12.44],
-        "minor": [18.16, 0.69, 12.99, 13.34, 1.07, 11.15, 1.38, 17.2, 13.62, 1.27, 12.79, 2.4]
-    }
+    # Les autres profils sont moins utilisés → on peut les garder en option avancée plus tard
 }
 
 # ────────────────────────────────────────────────
@@ -57,247 +58,347 @@ PROFILES = {
 
 st.markdown("""
     <style>
-    .main { background-color: #0b0e14; }
-    .report-card { 
-        padding: 40px; border-radius: 30px; text-align: center; color: white; 
-        border: 1px solid rgba(99, 102, 241, 0.3); box-shadow: 0 15px 45px rgba(0,0,0,0.6);
-        margin-bottom: 20px;
-    }
-    .file-header {
-        background: #1f2937; color: #10b981; padding: 10px 20px; border-radius: 10px;
-        font-family: 'JetBrains Mono', monospace; font-weight: bold; margin-bottom: 10px;
-        border-left: 5px solid #10b981;
+    .stApp { background-color: #0a0e17; }
+    .report-card {
+        padding: 2.2rem; border-radius: 1.6rem; text-align: center; color: white;
+        background: linear-gradient(135deg, #0f172a, #1e3a8a);
+        border: 1px solid rgba(99,102,241,0.25); box-shadow: 0 10px 40px rgba(0,0,0,0.65);
+        margin: 1.5rem 0;
     }
     .modulation-alert {
-        background: rgba(239, 68, 68, 0.15); color: #f87171;
-        padding: 15px; border-radius: 15px; border: 1px solid #ef4444;
-        margin-top: 20px; font-weight: bold; font-family: 'JetBrains Mono', monospace;
+        background: rgba(220,38,38,0.18); color: #fca5a5;
+        padding: 1rem; border-radius: 1rem; border: 1px solid #dc2626;
+        margin: 1.5rem 0; font-weight: 600;
     }
     .metric-box {
-        background: #161b22; border-radius: 15px; padding: 20px; text-align: center; border: 1px solid #30363d;
-        height: 100%; transition: 0.3s;
+        background: #111827; border-radius: 1rem; padding: 1.4rem;
+        border: 1px solid #374151; text-align: center;
+    }
+    .file-title {
+        background: #1f2937; color: #34d399; padding: 0.6rem 1.2rem;
+        border-radius: 0.8rem; font-family: 'Consolas', monospace; font-weight: bold;
+        border-left: 5px solid #10b981; margin: 1rem 0 0.5rem;
     }
     </style>
-    """, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
+
 
 # ────────────────────────────────────────────────
-#              FONCTIONS DE FILTRAGE
+#              FONCTIONS UTILITAIRES AUDIO
 # ────────────────────────────────────────────────
 
-def filter_original(y, sr):
-    y_harm, _ = librosa.effects.hpss(y, margin=(4.0, 1.0))
-    y_harm = librosa.effects.preemphasis(y_harm)
-    nyq = 0.5 * sr
-    b, a = butter(4, [100/nyq, 3000/nyq], btype='band')
+def butter_bandpass(lowcut, highcut, fs, order=4):
+    nyq = 0.5 * fs
+    low = lowcut / nyq
+    high = highcut / nyq
+    b, a = butter(order, [low, high], btype='band')
+    return b, a
+
+
+def preprocess_audio(y, sr, mode="sniper"):
+    if mode == "sniper":
+        # Plus agressif → on garde surtout les harmoniques médiums
+        y_harm = librosa.effects.harmonic(y, margin=3.5)
+        b, a = butter_bandpass(90, 4800, sr)
+    else:
+        y_harm, _ = librosa.effects.hpss(y, margin=(3.8, 1.2))
+        y_harm = librosa.effects.preemphasis(y_harm)
+        b, a = butter_bandpass(110, 3200, sr)
+
     return lfilter(b, a, y_harm)
 
-def filter_sniper(y, sr):
-    y_harm = librosa.effects.harmonic(y, margin=4.0)
-    nyq = 0.5 * sr
-    low, high = 80 / nyq, 5000 / nyq
-    b, a = butter(4, [low, high], btype='band')
-    return lfilter(b, a, y_harm)
 
 # ────────────────────────────────────────────────
-#              DÉTECTION TONALITÉ
+#              DÉTECTION TONALE
 # ────────────────────────────────────────────────
 
-def solve_key(chroma_vector, global_dom_root=None):
-    best_score, best_key = -np.inf, "Inconnu"
-    try:
-        cv = np.asarray(chroma_vector, dtype=np.float64).flatten()
-        if cv.size != 12: return {"key": "Erreur dim", "score": 0.0}
-    except: return {"key": "Erreur conv", "score": 0.0}
+def correlation_key_score(chroma: np.ndarray, profile: np.ndarray) -> float:
+    if chroma.size != 12 or profile.size != 12:
+        return -1.0
+    chroma = (chroma - chroma.min()) / (chroma.ptp() + 1e-10)
+    return np.corrcoef(chroma, profile)[0, 1]
 
-    cv_min, cv_max = cv.min(), cv.max()
-    if cv_max <= cv_min + 1e-12: return {"key": "Silence", "score": 0.0}
-    cv = (cv - cv_min) / (cv_max - cv_min + 1e-10)
 
-    for p_name, p_data in PROFILES.items():
-        for mode in ["major", "minor"]:
-            profile = np.asarray(p_data[mode], dtype=np.float64)
-            for shift in range(12):
-                rotated = np.roll(profile, shift)
-                corr = np.corrcoef(cv, rotated)[0, 1]
-                if not np.isfinite(corr): corr = -1.0
+def solve_key(chroma12: np.ndarray, profiles=PROFILES, global_dom_root=None) -> dict:
+    best_score = -np.inf
+    best_key = None
 
-                third_idx = (shift + (3 if mode == "minor" else 4)) % 12
-                fifth_idx = (shift + 7) % 12
-                
-                bonus = 0.18 if (global_dom_root is not None and (shift + 7) % 12 == global_dom_root and cv[global_dom_root] > 0.35) else 0.0
-                score = corr + 0.15 * cv[third_idx] + 0.05 * cv[fifth_idx] + bonus
+    chroma12 = np.asarray(chroma12).flatten()
+    if chroma12.size != 12:
+        return {"key": "Erreur", "score": 0.0}
+
+    if chroma12.max() < 1e-6:
+        return {"key": "Silence", "score": 0.0}
+
+    for profile_name, modes in profiles.items():
+        for mode, profile in modes.items():
+            profile = np.asarray(profile)
+            for root in range(12):
+                rotated = np.roll(profile, root)
+                corr = correlation_key_score(chroma12, rotated)
+
+                # Bonus harmoniques fortes (tierce, quinte)
+                third = (root + (3 if mode == "minor" else 4)) % 12
+                fifth  = (root + 7) % 12
+                bonus = 0.20 * chroma12[third] + 0.12 * chroma12[fifth]
+
+                # Bonus si dominante globale détectée
+                if global_dom_root is not None and fifth == global_dom_root:
+                    bonus += 0.25 * chroma12[global_dom_root]
+
+                score = corr + bonus
 
                 if score > best_score:
-                    best_score, best_key = score, f"{NOTES_LIST[shift]} {mode}"
-    return {"key": best_key, "score": float(best_score)}
+                    best_score = score
+                    best_key = f"{NOTES[root]} {mode}"
+
+    return {"key": best_key or "Inconnu", "score": float(best_score)}
+
 
 # ────────────────────────────────────────────────
-#               ANALYSE ENGINE
+#              MOTEUR D'ANALYSE
 # ────────────────────────────────────────────────
 
-@st.cache_data(show_spinner=False)
-def analyze_full_engine(file_bytes, file_name, filter_type="original"):
+@st.cache_data(ttl="10min", show_spinner="Analyse en cours...")
+def analyze_track(audio_bytes: bytes, filename: str, filter_mode: str = "sniper") -> dict | None:
     try:
-        ext = file_name.rsplit('.', 1)[-1].lower()
-        if ext == 'm4a':
-            audio = AudioSegment.from_file(io.BytesIO(file_bytes), format="m4a")
+        ext = Path(filename).suffix.lower().lstrip('.')
+
+        if ext in ['m4a', 'mp4', 'aac']:
+            audio = AudioSegment.from_file(io.BytesIO(audio_bytes), format=ext)
             samples = np.array(audio.get_array_of_samples(), dtype=np.float32)
-            if audio.channels == 2: samples = samples.reshape((-1, 2)).mean(axis=1)
-            y, sr = samples / (1 << 15), audio.frame_rate
-            if sr != 22050: 
-                y = librosa.resample(y, orig_sr=sr, target_sr=22050)
-                sr = 22050
+            if audio.channels == 2:
+                samples = samples.reshape(-1, 2).mean(axis=1)
+            y = samples / (1 << (8 * audio.sample_width - 1))
+            sr = audio.frame_rate
         else:
-            with io.BytesIO(file_bytes) as buf:
-                y, sr = librosa.load(buf, sr=22050, mono=True)
-    except Exception: return None
+            y, sr = librosa.load(io.BytesIO(audio_bytes), sr=22050, mono=True)
 
-    if len(y) < 22050: return None # Trop court
+        if len(y) < sr * 5:  # moins de 5 secondes
+            return None
 
-    tuning = librosa.estimate_tuning(y=y, sr=sr)
-    y_filt = filter_sniper(y, sr) if filter_type == "sniper" else filter_original(y, sr)
-    
-    chroma_global = librosa.feature.chroma_cqt(y=y_filt, sr=sr, tuning=tuning, bins_per_octave=24)
-    global_avg = np.mean(chroma_global, axis=1)
-    
-    top2 = np.argsort(global_avg)[-2:]
-    dom_root = top2[1] if (top2[0] + 7) % 12 == top2[1] else (top2[0] if (top2[1] + 7) % 12 == top2[0] else None)
+        # Resampling systématique pour cohérence
+        if sr != 22050:
+            y = librosa.resample(y, orig_sr=sr, target_sr=22050)
+            sr = 22050
 
-    duration = librosa.get_duration(y=y, sr=sr)
-    step, timeline, votes = 2, [], Counter()
+        y_clean = preprocess_audio(y, sr, filter_mode)
 
-    for start_sec in range(0, max(1, int(duration) - step), step):
-        seg = y_filt[int(start_sec * sr):int((start_sec + step) * sr)]
-        if len(seg) < 1000 or np.max(np.abs(seg)) < 0.01: continue
+        # Estimation du diapason global
+        tuning_offset = librosa.estimate_tuning(y=y_clean, sr=sr)
 
-        c_raw = librosa.feature.chroma_cqt(y=seg, sr=sr, tuning=tuning, bins_per_octave=24)
-        c12 = np.mean((c_raw[::2, :] + c_raw[1::2, :]) / 2, axis=1)
-        
-        res = solve_key(c12, global_dom_root=dom_root)
-        if res['score'] < 0.70: continue # Seuil assoupli pour garantir un résultat
+        # Chroma global (plus haute résolution)
+        chroma_cqt = librosa.feature.chroma_cqt(
+            y=y_clean, sr=sr,
+            tuning=tuning_offset,
+            bins_per_octave=36,       # ← plus précis
+            hop_length=512*2
+        )
+        global_chroma = np.mean(chroma_cqt, axis=1)
 
-        w = 2.0 if start_sec < 10 or start_sec > (duration - 15) else 1.0
-        votes[res['key']] += int(res['score'] * 100 * w)
-        timeline.append({"Temps": start_sec, "Note": res['key'], "Conf": res['score']})
+        # Détection dominante globale (souvent quinte)
+        top_idx = np.argsort(global_chroma)[-2:]
+        dom_root = None
+        if (top_idx[0] + 7) % 12 in top_idx:
+            dom_root = (top_idx[0] + 7) % 12
 
-    if not votes: return None
+        duration = librosa.get_duration(y=y, sr=sr)
+        window = 4          # secondes par segment
+        step = 1.5          # chevauchement important
 
-    main_key = votes.most_common(1)[0][0]
-    main_conf = int(np.mean([t['Conf'] for t in timeline if t['Note'] == main_key]) * 100)
-    
-    mod_detected, target_key, target_conf = False, None, None
-    if len(votes.most_common(2)) > 1:
-        sec_key, sec_val = votes.most_common(2)[1]
-        if (sec_val / sum(votes.values())) > 0.25:
-            mod_detected, target_key = True, sec_key
-            target_conf = int(np.mean([t['Conf'] for t in timeline if t['Note'] == sec_key]) * 100)
+        timeline = []
+        votes = Counter()
 
-    tempo, _ = librosa.beat.beat_track(y=librosa.effects.percussive(y), sr=sr)
+        for start in np.arange(0, duration - window + 0.1, step):
+            seg = y_clean[int(start * sr):int((start + window) * sr)]
+            if len(seg) < sr * 0.8 or np.max(np.abs(seg)) < 0.015:
+                continue
 
-    return {
-        "key": main_key, "camelot": CAMELOT_MAP.get(main_key, "??"),
-        "conf": min(main_conf, 99), "tempo": int(float(tempo or 0)),
-        "tuning_hz": round(440 * (2 ** (tuning / 12)), 1), "pitch_offset": round(tuning, 2),
-        "timeline": timeline, "chroma": global_avg.tolist(),
-        "modulation": mod_detected, "target_key": target_key, "target_conf": target_conf,
-        "target_camelot": CAMELOT_MAP.get(target_key, "??") if target_key else None,
-        "name": file_name
-    }
+            cqt = librosa.feature.chroma_cqt(
+                y=seg, sr=sr, tuning=tuning_offset,
+                bins_per_octave=36, hop_length=512
+            )
+            c12 = np.mean(cqt, axis=1)
+
+            result = solve_key(c12, global_dom_root=dom_root)
+
+            if result["score"] < 0.68:
+                continue
+
+            weight = 1.8 if start < 12 or start > duration - 20 else 1.0
+            votes[result["key"]] += result["score"] * 100 * weight
+
+            timeline.append({
+                "start": round(start, 1),
+                "key": result["key"],
+                "confidence": round(result["score"] * 100, 1)
+            })
+
+        if not votes:
+            return None
+
+        main_key = votes.most_common(1)[0][0]
+        main_conf = np.mean([t["confidence"] for t in timeline if t["key"] == main_key])
+
+        # Détection modulation
+        modulation = False
+        target_key = target_camelot = None
+        if len(votes) >= 2:
+            _, second_score = votes.most_common(2)[1]
+            if second_score / sum(votes.values()) > 0.28:
+                modulation = True
+                target_key = votes.most_common(2)[1][0]
+                target_camelot = CAMELOT_MAP.get(target_key)
+
+        tempo, _ = librosa.beat.beat_track(y=librosa.effects.percussive(y), sr=sr, units="tempo")
+
+        return {
+            "filename": filename,
+            "key": main_key,
+            "camelot": CAMELOT_MAP.get(main_key, "??"),
+            "confidence": min(int(main_conf), 99),
+            "tempo": int(round(tempo)) if tempo is not None else "—",
+            "tuning_offset_cents": round(tuning_offset * 100, 1),
+            "tuning_hz": round(440 * (2 ** (tuning_offset / 12)), 1),
+            "timeline": timeline,
+            "global_chroma": global_chroma.tolist(),
+            "modulation": modulation,
+            "target_key": target_key,
+            "target_camelot": target_camelot
+        }
+
+    except Exception as e:
+        st.error(f"Erreur analyse {filename} : {str(e)}")
+        return None
+
 
 # ────────────────────────────────────────────────
-#                UTILITAIRES UI
+#                   INTERFACE
 # ────────────────────────────────────────────────
 
-def get_piano_js(btn_id, key_name):
-    if not key_name or " " not in key_name: return ""
-    root, mode = key_name.split()
-    return f"""
-    document.getElementById('{btn_id}').onclick = function() {{
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const freqs = {{'C':261.6,'C#':277.2,'D':293.7,'D#':311.1,'E':329.6,'F':349.2,'F#':370.0,'G':392.0,'G#':415.3,'A':440.0,'A#':466.2,'B':493.9}};
-        const intervals = '{mode}' === 'minor' ? [0,3,7,12] : [0,4,7,12];
-        intervals.forEach(i => {{
-            const base = freqs['{root}'] * Math.pow(2, i/12);
-            [1,2].forEach(h => {{
-                const osc = ctx.createOscillator(); const gain = ctx.createGain();
-                osc.type = h===1 ? 'triangle' : 'sine';
-                osc.frequency.setValueAtTime(base * h, ctx.currentTime);
-                gain.gain.setValueAtTime(0, ctx.currentTime);
-                gain.gain.linearRampToValueAtTime(0.1/h, ctx.currentTime + 0.05);
-                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.5);
-                osc.connect(gain); gain.connect(ctx.destination);
-                osc.start(); osc.stop(ctx.currentTime + 1.5);
-            }});
-        }});
-    }};
-    """
-
-def send_telegram_report(data, fig_line, fig_polar):
-    if not TELEGRAM_TOKEN or not CHAT_ID: return
-    try:
-        caption = f"🎼 *Report: {data['name']}*\nKey: `{data['key']}` ({data['camelot']})\nTempo: `{data['tempo']} BPM`"
-        img_tl = fig_line.to_image(format="png", engine="kaleido")
-        img_rd = fig_polar.to_image(format="png", engine="kaleido")
-        media = [{'type': 'photo', 'media': 'attach://a.png', 'caption': caption, 'parse_mode': 'Markdown'}, {'type': 'photo', 'media': 'attach://b.png'}]
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMediaGroup", data={'chat_id': CHAT_ID, 'media': json.dumps(media)}, files={'a.png': img_tl, 'b.png': img_rd}, timeout=15)
-    except: pass
-
-# ────────────────────────────────────────────────
-#                INTERFACE PRINCIPALE
-# ────────────────────────────────────────────────
-
-st.title("🎧 DJ's Ear Pro Elite")
+st.title("🎧 DJ's Ear Pro Elite  · Analyse tonale avancée")
 
 with st.sidebar:
-    filter_mode = st.radio("Style de filtrage", ["Original", "Sniper (Recommandé)"], index=1)
-    filter_type = "sniper" if "Sniper" in filter_mode else "original"
-    if st.button("🧹 Vider le cache"):
+    st.header("Paramètres")
+    filter_style = st.radio(
+        "Style de pré-filtrage",
+        ["Original (polyvalent)", "Sniper (médiums clairs)"],
+        index=1
+    )
+    filter_mode = "sniper" if "Sniper" in filter_style else "original"
+
+    if st.button("🧹 Vider le cache", type="primary"):
         st.cache_data.clear()
+        st.success("Cache vidé", icon="✅")
         st.rerun()
 
-uploaded_files = st.file_uploader("Audio (MP3, WAV, M4A)", type=['mp3', 'wav', 'm4a', 'flac'], accept_multiple_files=True)
+    st.caption("v2025 – amélioré par Grok")
 
-if uploaded_files:
-    for idx, file in enumerate(reversed(uploaded_files)):
-        container = st.container()
-        with container:
-            with st.status(f"Analyse de {file.name}...", expanded=True) as status:
-                data = analyze_full_engine(file.getvalue(), file.name, filter_type)
-                if data:
-                    status.update(label=f"✅ {file.name} analysé", state="complete", expanded=False)
-                else:
-                    status.update(label=f"❌ Erreur sur {file.name}", state="error")
-                    st.error("Données harmoniques introuvables. Vérifiez le volume du fichier.")
-                    continue
 
-            # Affichage UI
-            bg = "linear-gradient(135deg, #0f172a, #1e3a8a)" if not data['modulation'] else "linear-gradient(135deg, #1e1b4b, #7f1d1d)"
-            st.markdown(f"""
-                <div class="report-card" style="background:{bg};">
-                    <p style="opacity:0.7;">TONALITÉ PRINCIPALE</p>
-                    <h1 style="font-size:5em; margin:10px 0;">{data['key'].upper()}</h1>
-                    <h3>CAMELOT {data['camelot']}  •  Confiance {data['conf']}%</h3>
-                    {f"<div class='modulation-alert'>⚠️ MODULATION VERS {data['target_key']} ({data['target_camelot']})</div>" if data['modulation'] else ""}
-                </div>
-            """, unsafe_allow_html=True)
+uploaded_files = st.file_uploader(
+    "Déposez vos fichiers audio (mp3, wav, m4a, flac...)",
+    type=["mp3", "wav", "m4a", "flac", "aac"],
+    accept_multiple_files=True
+)
 
-            c1, c2, c3 = st.columns(3)
-            c1.markdown(f"<div class='metric-box'><b>TEMPO</b><br><span style='font-size:2em;'>{data['tempo']}</span><br>BPM</div>", unsafe_allow_html=True)
-            c2.markdown(f"<div class='metric-box'><b>TUNING</b><br><span style='font-size:2em;'>{data['tuning_hz']}</span><br>Hz</div>", unsafe_allow_html=True)
-            with c3:
-                bid = f"btn_{idx}"
-                components.html(f'<button id="{bid}" style="width:100%; height:90px; background:#4F46E5; color:white; border-radius:12px; border:none; cursor:pointer; font-weight:bold;">🎹 TESTER L\'ACCORD</button><script>{get_piano_js(bid, data["key"])}</script>', height=100)
+if not uploaded_files:
+    st.info("Déposez un ou plusieurs fichiers audio pour commencer l'analyse", icon="🎵")
+    st.stop()
 
-            gl, gr = st.columns([2, 1])
-            df = pd.DataFrame(data['timeline'])
-            fig_l = px.line(df, x="Temps", y="Note", markers=True, template="plotly_dark", category_orders={"Note": NOTES_ORDER})
-            gl.plotly_chart(fig_l, use_container_width=True)
+for file in reversed(uploaded_files):
+    with st.container():
+        with st.status(f"Analyse → {file.name}", expanded=True) as status:
+            result = analyze_track(file.getvalue(), file.name, filter_mode)
 
-            fig_p = go.Figure(go.Scatterpolar(r=data['chroma'], theta=NOTES_LIST, fill='toself'))
-            fig_p.update_layout(template="plotly_dark", polar=dict(radialaxis=dict(visible=False)))
-            gr.plotly_chart(fig_p, use_container_width=True)
+            if result is None:
+                status.update(label="Échec de l'analyse", state="error")
+                st.error("Impossible d'extraire des informations harmoniques exploitables.")
+                continue
 
-            send_telegram_report(data, fig_l, fig_p)
-            st.divider()
-else:
-    st.info("En attente de fichiers...")
+            status.update(label="Analyse terminée", state="complete", expanded=False)
+
+        # ─── Affichage principal ────────────────────────────────
+        bg = "linear-gradient(135deg, #1e1b4b, #7f1d1d)" if result["modulation"] else "linear-gradient(135deg, #0f172a, #1e3a8a)"
+
+        st.markdown(f"""
+        <div class="report-card" style="background:{bg};">
+            <div style="font-size:1.1rem; opacity:0.8; margin-bottom:0.6rem;">TONALITÉ PRINCIPALE</div>
+            <h1 style="font-size:5.8rem; margin:0.2rem 0;">{result['key']}</h1>
+            <h3 style="margin:0.4rem 0;">Camelot {result['camelot']}  •  Confiance {result['confidence']}%</h3>
+            {f"<div class='modulation-alert'>⚠️ MODULATION DÉTECTÉE → {result['target_key']} ({result['target_camelot']})</div>" if result['modulation'] else ""}
+        </div>
+        """, unsafe_allow_html=True)
+
+        cols = st.columns([1,1,1.4])
+        cols[0].markdown(f"<div class='metric-box'><b>TEMPO</b><br><span style='font-size:3.2rem'>{result['tempo']}</span><br>BPM</div>", unsafe_allow_html=True)
+        cols[1].markdown(f"<div class='metric-box'><b>TUNING</b><br><span style='font-size:3.2rem'>{result['tuning_hz']}</span><br>Hz  ({result['tuning_offset_cents']:+}¢)</div>", unsafe_allow_html=True)
+
+        with cols[2]:
+            btn_id = f"play_{hash(file.name)}"
+            components.html(
+                f"""
+                <button id="{btn_id}" style="width:100%; height:88px; background:#6366f1; color:white; border:none; border-radius:12px; font-size:1.3rem; font-weight:bold; cursor:pointer;">
+                    ▶ Tester {result['key']}
+                </button>
+                <script>
+                document.getElementById('{btn_id}').onclick = function() {{
+                    const ctx = new AudioContext();
+                    const root = '{result['key'].split()[0]}';
+                    const mode = '{result['key'].split()[1]}';
+                    const freqs = {{'C':261.63,'C#':277.18,'D':293.66,'D#':311.13,'E':329.63,'F':349.23,'F#':369.99,'G':392.00,'G#':415.30,'A':440.00,'A#':466.16,'B':493.88}};
+                    const base = freqs[root];
+                    const intervals = mode === 'minor' ? [0,3,7,12] : [0,4,7,12];
+                    intervals.forEach(i => {{
+                        const f = base * Math.pow(2, i/12);
+                        [1, 1.5].forEach(gainMult => {{
+                            const osc = ctx.createOscillator();
+                            const gain = ctx.createGain();
+                            osc.type = gainMult === 1 ? 'triangle' : 'sine';
+                            osc.frequency.setValueAtTime(f * gainMult, ctx.currentTime);
+                            gain.gain.setValueAtTime(0, ctx.currentTime);
+                            gain.gain.linearRampToValueAtTime(0.12 / gainMult, ctx.currentTime + 0.06);
+                            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 2.2);
+                            osc.connect(gain).connect(ctx.destination);
+                            osc.start();
+                            osc.stop(ctx.currentTime + 2.2);
+                        }});
+                    }});
+                }};
+                </script>
+                """,
+                height=100
+            )
+
+        st.markdown(f"<div class='file-title'>Évolution dans le temps – {file.name}</div>", unsafe_allow_html=True)
+
+        left, right = st.columns([3, 1.3])
+
+        with left:
+            if result["timeline"]:
+                df = pd.DataFrame(result["timeline"])
+                fig = px.line(
+                    df, x="start", y="key",
+                    markers=True, template="plotly_dark",
+                    category_orders={"key": NOTES_ORDER},
+                    labels={"start": "Temps (s)", "key": "Tonalité"}
+                )
+                fig.update_traces(line=dict(width=3.5), marker=dict(size=10))
+                st.plotly_chart(fig, use_container_width=True)
+
+        with right:
+            fig_polar = go.Figure(go.Scatterpolar(
+                r=result["global_chroma"],
+                theta=NOTES,
+                fill='toself',
+                fillcolor="rgba(99,102,241,0.4)",
+                line=dict(color="#6366f1")
+            ))
+            fig_polar.update_layout(
+                template="plotly_dark",
+                polar=dict(radialaxis=dict(visible=False, range=[0, 1])),
+                showlegend=False,
+                margin=dict(l=20, r=20, t=40, b=20)
+            )
+            st.plotly_chart(fig_polar, use_container_width=True)
+
+        st.divider()
