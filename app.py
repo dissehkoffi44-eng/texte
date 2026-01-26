@@ -1,4 +1,4 @@
-# RCDJ228 MUSIC SNIPER M5 - HYBRIDE 2026 (segments only – seuil 85%)
+# RCDJ228 MUSIC SNIPER M5 - HYBRIDE 2026 (segments only – seuil 85% + fallback meilleur segment)
 # Moteur segments only – Timeline fine – UI/Telegram premium
 import streamlit as st
 import librosa
@@ -76,6 +76,10 @@ st.markdown("""
     .stats-box {
         background: #1a2332; border-radius: 12px; padding: 16px; margin: 16px 0;
         border: 1px solid #2d3748; font-family: 'JetBrains Mono'; font-size: 0.95em;
+    }
+    .warning-note {
+        background: #4c1d1d; color: #fda4af; padding: 12px; border-radius: 8px; margin: 16px 0;
+        border-left: 4px solid #f87171;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -168,12 +172,11 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.85):
         seg_scores = vote_profiles(cqt_seg, cens_seg, bass_seg)
         best_key = max(seg_scores, key=seg_scores.get)
 
-        if seg_scores[best_key] >= threshold:
-            # Poids de base (milieu du morceau plus important)
+        conf = seg_scores[best_key]
+
+        if conf >= threshold:
             weight = 1.45 if 0.18 < (start_s / duration) < 0.82 else 1.0
             
-            # Boost progressif selon la confiance
-            conf = seg_scores[best_key]
             if conf >= 0.92:
                 weight *= 2.4
             elif conf >= 0.89:
@@ -182,27 +185,36 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.85):
                 weight *= 1.35
             
             segment_votes[best_key] += conf * weight
-            timeline.append({
-                "time": start_s + seg_duration/2,
-                "key": best_key,
-                "score": conf
-            })
+            timeline.append({"time": start_s + seg_duration/2, "key": best_key, "score": conf})
             valid_segments += 1
             retained_scores.append(conf)
 
-    if not segment_votes:
+        # On garde TOUS les segments calculés pour le fallback
+        timeline.append({"time": start_s + seg_duration/2, "key": best_key, "score": conf})
+        retained_scores.append(conf)
+
+    if not retained_scores:
         return None
 
-    # Score final → uniquement basé sur les segments
-    total_seg = sum(segment_votes.values())
-    seg_norm = {k: v / total_seg for k,v in segment_votes.items()}
-    final_scores = seg_norm
+    # ── Construction du résultat ──
+    if segment_votes:  # Cas normal : au moins un segment >= seuil
+        total_seg = sum(segment_votes.values())
+        seg_norm = {k: v / total_seg for k,v in segment_votes.items()}
+        final_scores = Counter(seg_norm)
+        best_key, best_raw = final_scores.most_common(1)[0]
+        max_raw = max(final_scores.values())
+        confidence = min(99, int(100 * best_raw / max_raw * 1.18))
+        note = None
+    else:  # Fallback : aucun segment >= seuil → on prend le meilleur quand même
+        if timeline:
+            best_overall = max(timeline, key=lambda x: x["score"])
+            best_key = best_overall["key"]
+            confidence = min(99, int(best_overall["score"] * 100 * 0.9))  # Pénalité 10%
+            note = "Confiance faible – aucun segment n'atteint le seuil"
+        else:
+            return None
 
-    best_key, best_raw = final_scores.most_common(1)[0]
-    max_raw = max(final_scores.values())
-    confidence = min(99, int(100 * best_raw / max_raw * 1.18))
-
-    # Détection modulation
+    # Détection modulation (seulement si assez de points)
     modulation = None
     if len(timeline) >= 8:
         mid = len(timeline) // 2
@@ -232,6 +244,8 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.85):
         "retention_pct": (valid_segments / len(segments_starts) * 100) if len(segments_starts) > 0 else 0,
         "avg_retained_score": np.mean(retained_scores) if retained_scores else 0
     }
+    if note:
+        result["note"] = note
 
     # Telegram Report (sans radar)
     if TELEGRAM_TOKEN and CHAT_ID:
@@ -243,6 +257,7 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.85):
             img_tl = fig_tl.to_image(format="png", width=1100, height=520)
 
             mod_text = f"**MODULATION →** {modulation.upper()} ({result['target_camelot']})" if modulation else "**STABLE**"
+            note_text = f"**NOTE** {note.upper()}" if note else ""
             caption = (
                 f"**RCDJ228 SNIPER M5 – SEGMENTS ONLY 2026**\n━━━━━━━━━━━━━━━━━\n"
                 f"**Track** `{file_name}`\n"
@@ -252,7 +267,7 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.85):
                 f"**Tempo** `{result['tempo']} BPM`\n"
                 f"**Accordage** `{result['tuning_hz']} Hz  ({result['tuning_cents']:+.1f}¢)`\n"
                 f"**Segments valides** `{valid_segments}`\n"
-                f"{mod_text}\n━━━━━━━━━━━━━━━━━"
+                f"{mod_text}\n{note_text}\n━━━━━━━━━━━━━━━━━"
             )
 
             files = {'p1': ('timeline.png', img_tl, 'image/png')}
@@ -296,7 +311,7 @@ def get_chord_test_js(btn_id, key_str):
 # ────────────────────────────────────────────────
 # INTERFACE
 # ────────────────────────────────────────────────
-st.title("🎯 RCDJ228 MUSIC SNIPER M5 — Segments only • Seuil 85% 2026")
+st.title("🎯 RCDJ228 MUSIC SNIPER M5 — Segments only • Seuil 85% + Fallback 2026")
 
 uploaded_files = st.file_uploader("Déposez vos tracks (mp3, wav, flac, m4a)", 
                                  type=['mp3','wav','flac','m4a'], 
@@ -305,7 +320,7 @@ uploaded_files = st.file_uploader("Déposez vos tracks (mp3, wav, flac, m4a)",
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2569/2569107.png", width=100)
     st.header("Sniper M5 – Segments")
-    st.caption("Segments only • Seuil strict • Boost conf ≥85%")
+    st.caption("Segments only • Seuil strict • Fallback si < seuil")
     
     st.subheader("Réglages fins")
     SEGMENT_THRESHOLD = st.slider(
@@ -315,7 +330,7 @@ with st.sidebar:
         value=0.85,
         step=0.01,
         format="%.2f",
-        help="0.85+ = très fiable mais peu de segments\n0.75–0.80 = plus de points mais plus de bruit possible"
+        help="0.85+ = très fiable mais risque de fallback\n0.75–0.82 = plus de segments retenus"
     )
     if st.button("🔄 Reset cache & relancer"):
         st.cache_data.clear()
@@ -356,16 +371,19 @@ if uploaded_files:
                     <p style="font-size:1.9em; margin:14px 0;">
                         CAMELOT <b>{data['camelot']}</b>  •  CONFIANCE <b>{data['conf']}%</b>
                     </p>
-                    {f"<div class='modulation-alert'>MODULATION → {data['modulation'].upper()} ({data['target_camelot']})</div>" if data['modulation'] else ""}
+                    {f"<div class='modulation-alert'>MODULATION → {data['modulation'].upper()} ({data['target_camelot']})</div>" if data.get('modulation') else ""}
                 </div>
                 """, unsafe_allow_html=True)
+
+                if "note" in data:
+                    st.markdown(f"<div class='warning-note'>{data['note']}</div>", unsafe_allow_html=True)
 
                 st.markdown(f"""
                 <div class="stats-box">
                     Seuil : <b>{SEGMENT_THRESHOLD:.2f}</b>  
-                      Segments retenus : <b>{data['valid_segments']}</b> / ~{len(np.arange(0, max(0.1, data['duration'] - 8), 3)):.0f} 
-                    ({data['retention_pct']:.1f} %)  
-                      Score moyen retenus : <b>{data['avg_retained_score']:.3f}</b>
+                      Segments retenus (≥ seuil) : <b>{data['valid_segments']}</b>  
+                      Meilleur score segment : <b>{max(s['score'] for s in data['timeline']):.3f}</b>  
+                      Durée : <b>{data['duration']}</b> s
                 </div>
                 """, unsafe_allow_html=True)
 
