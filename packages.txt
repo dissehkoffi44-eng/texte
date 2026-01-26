@@ -1,5 +1,2 @@
-build-essential
-python3-dev
-libblas-dev
-liblapack-dev
-gfortran
+ffmpeg
+libsndfile1
