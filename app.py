@@ -369,109 +369,80 @@ uploaded_files = st.file_uploader(
 )
 
 if uploaded_files:
+    # On inverse pour traiter le dernier arrivé en premier si souhaité
     files = list(reversed(uploaded_files))
-    total = len(files)
-
-    progress_area = st.empty()
-    results_container = st.container()
-
+    
     for idx, file in enumerate(files):
-        progress_area.markdown(f"""
-            <div style="padding:12px; background:rgba(16,185,129,0.12); border:1px solid #10b981; border-radius:12px; margin:12px 0;">
-                <strong>Analyse {idx+1} / {total}</strong> — {file.name}
-            </div>
-        """, unsafe_allow_html=True)
+        # Création d'un conteneur unique par fichier pour éviter les mélanges
+        file_container = st.container()
+        
+        with file_container:
+            st.markdown(f"<div class='file-header'>Analyse en cours : {file.name}</div>", unsafe_allow_html=True)
+            
+            # Utilisation de st.status pour encapsuler le calcul
+            with st.status(f"Calcul des données pour {file.name}...", expanded=True) as status:
+                file_bytes = file.getvalue()
+                data = analyze_full_engine(file_bytes, file.name, filter_type=filter_type)
+                
+                if data is None:
+                    status.update(label=f"❌ Erreur sur {file.name}", state="error")
+                    st.error("Impossible d'extraire les données harmoniques.")
+                    continue
+                
+                status.update(label=f"✅ Analyse terminée : {file.name}", state="complete", expanded=False)
 
-        file_result_container = results_container.container()
+            # --- AFFICHAGE DES RÉSULTATS ---
+            # On s'assure que 'data' existe bien ici
+            st.subheader(f"📊 Rapport : {data['name']}")
+            
+            bg_grad = "linear-gradient(135deg, #0f172a, #1e3a8a)" if not data['modulation'] \
+                      else "linear-gradient(135deg, #1e1b4b, #7f1d1d)"
 
-        with file_result_container:
-            with st.status(f"Analyse → {file.name}", expanded=True) as status:
-                prog_bar = st.progress(0)
-                txt_status = st.empty()
+            st.markdown(f"""
+                <div class="report-card" style="background:{bg_grad};">
+                    <p style="opacity:0.7; letter-spacing:1.5px;">TONALITÉ PRINCIPALE</p>
+                    <h1 style="font-size:5.8em; margin:8px 0;">{data['key'].upper()}</h1>
+                    <p style="font-size:1.9em;">CAMELOT <b>{data['camelot']}</b>  •  Confiance <b>{data['conf']}%</b></p>
+                    {f"<div class='modulation-alert'>⚠️ MODULATION VERS {data['target_key'].upper()} ({data['target_camelot']}) — Conf: {data['target_conf']}%</div>" if data['modulation'] else ""}
+                </div>
+                """, unsafe_allow_html=True)
 
-                # Étapes grossières de progression
-                txt_status.code("Chargement et prétraitement audio...")
-                prog_bar.progress(10)
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.markdown(f"<div class='metric-box'><b>TEMPO</b><br><span style='font-size:2.4em;'>{data['tempo']}</span><br>BPM</div>", unsafe_allow_html=True)
+            with col2:
+                st.markdown(f"<div class='metric-box'><b>TUNING</b><br><span style='font-size:2.4em;'>{data['tuning_hz']}</span><br>Hz ({data['pitch_offset']}¢)</div>", unsafe_allow_html=True)
+            with col3:
+                btn_id = f"playbtn_{idx}_{hash(file.name)}"
+                components.html(f"""
+                    <button id="{btn_id}" style="width:100%; height:100px; background:linear-gradient(90deg,#4F46E5,#7C3AED); color:white; border:none; border-radius:12px; font-weight:bold; font-size:1.15em; cursor:pointer;">
+                        🎹 JOUER ACCORD
+                    </button>
+                    <script>{get_piano_js(btn_id, data['key'])}</script>
+                    """, height=120)
 
-                data = analyze_full_engine(
-                    file.getvalue(),
-                    file.name,
-                    filter_type=filter_type
-                )
-
-                if data is not None:
-                    txt_status.code("Finalisation des résultats...")
-                    prog_bar.progress(95)
-
-                # Fin → on passe à 100%
-                prog_bar.progress(100)
-                txt_status.code("Analyse terminée")
-
-                status.update(label=f"Terminé : {file.name}", state="complete", expanded=False)
-
-        if data:
-            with file_result_container:
-                # === PARTIE DÉBOGAGE (à retirer quand tout est OK) ===
-                st.subheader(f"RÉSULTAT — {data['name']}")
-                st.json(data)
-                st.write("Tempo :", data["tempo"])
-                st.write("Key :", data["key"], data["camelot"])
-                st.write("Confiance :", data["conf"])
-                # === FIN DÉBOGAGE ===
-
-                st.markdown(f"<div class='file-header'>RÉSULTAT — {data['name']}</div>", unsafe_allow_html=True)
-
-                bg_grad = "linear-gradient(135deg, #0f172a, #1e3a8a)" if not data['modulation'] \
-                    else "linear-gradient(135deg, #1e1b4b, #7f1d1d)"
-
-                st.markdown(f"""
-                    <div class="report-card" style="background:{bg_grad};">
-                        <p style="opacity:0.7; letter-spacing:1.5px;">TONALITÉ PRINCIPALE</p>
-                        <h1 style="font-size:5.8em; margin:8px 0;">{data['key'].upper()}</h1>
-                        <p style="font-size:1.9em;">CAMELOT <b>{data['camelot']}</b>  •  Confiance <b>{data['conf']}%</b></p>
-                        {f"<div class='modulation-alert'>⚠️ MODULATION VERS {data['target_key'].upper()} ({data['target_camelot']}) — Conf: {data['target_conf']}%</div>" if data['modulation'] else ""}
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.markdown(f"<div class='metric-box'><b>TEMPO</b><br><span style='font-size:2.4em;'>{data['tempo']}</span><br>BPM</div>", unsafe_allow_html=True)
-                with col2:
-                    st.markdown(f"<div class='metric-box'><b>TUNING</b><br><span style='font-size:2.4em;'>{data['tuning_hz']}</span><br>Hz ({data['pitch_offset']}¢)</div>", unsafe_allow_html=True)
-                with col3:
-                    btn_id = f"playbtn_{idx}_{hash(file.name)}"
-                    components.html(f"""
-                        <button id="{btn_id}" style="width:100%; height:100px; background:linear-gradient(90deg,#4F46E5,#7C3AED); color:white; border:none; border-radius:12px; font-weight:bold; font-size:1.15em; cursor:pointer;">
-                            🎹 JOUER ACCORD
-                        </button>
-                        <script>{get_piano_js(btn_id, data['key'])}</script>
-                        """, height=120)
-
-                c_left, c_right = st.columns([2.2, 1])
-                with c_left:
-                    df = pd.DataFrame(data['timeline'])
+            c_left, c_right = st.columns([2.2, 1])
+            with c_left:
+                df = pd.DataFrame(data['timeline'])
+                if not df.empty:
                     fig_line = px.line(df, x="Temps", y="Note", markers=True, template="plotly_dark",
                                        category_orders={"Note": NOTES_ORDER}, title="Évolution harmonique")
                     fig_line.update_layout(height=340, margin=dict(l=10,r=10,t=40,b=10))
                     st.plotly_chart(fig_line, use_container_width=True)
 
-                with c_right:
-                    fig_polar = go.Figure(go.Scatterpolar(
-                        r=data['chroma'], theta=NOTES_LIST, fill='toself', line_color='#818cf8'))
-                    fig_polar.update_layout(template="plotly_dark", height=340,
-                                            title="Signature chromatique",
-                                            margin=dict(l=20,r=20,t=40,b=20),
-                                            polar=dict(radialaxis=dict(visible=False)))
-                    st.plotly_chart(fig_polar, use_container_width=True)
+            with c_right:
+                fig_polar = go.Figure(go.Scatterpolar(
+                    r=data['chroma'], theta=NOTES_LIST, fill='toself', line_color='#818cf8'))
+                fig_polar.update_layout(template="plotly_dark", height=340,
+                                        title="Signature chromatique",
+                                        margin=dict(l=20,r=20,t=40,b=20),
+                                        polar=dict(radialaxis=dict(visible=False)))
+                st.plotly_chart(fig_polar, use_container_width=True)
 
-                send_telegram_report(data, fig_line, fig_polar)
-                st.toast(f"Rapport Telegram envoyé pour {file.name}", icon="✅")
-
-    progress_area.success(f"✓ {total} fichier(s) analysé(s) avec succès !")
-
-    if st.sidebar.button("🧹 Vider cache & relancer", use_container_width=True):
-        st.cache_data.clear()
-        st.rerun()
+            # Envoi Telegram
+            send_telegram_report(data, fig_line, fig_polar)
+            st.toast(f"Rapport Telegram envoyé pour {file.name}", icon="✅")
+            st.divider() # Séparateur entre les fichiers
 
 else:
     st.info("Déposez un ou plusieurs fichiers audio pour démarrer l'analyse.\nVous pouvez choisir entre deux styles de filtrage dans la sidebar.")
