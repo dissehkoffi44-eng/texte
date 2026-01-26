@@ -1,11 +1,10 @@
-# RCDJ228 MUSIC SNIPER M5 - HYBRIDE 2026 (avec seuil configurable + boost segments très confiants)
-# Moteur M4 + Timeline fine M3 + UI/Telegram premium M4
+# RCDJ228 MUSIC SNIPER M5 - HYBRIDE 2026 (segments only – seuil 85%)
+# Moteur segments only – Timeline fine – UI/Telegram premium
 import streamlit as st
 import librosa
 import numpy as np
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 from collections import Counter
 import io
 import os
@@ -48,8 +47,6 @@ PROFILES = {
     "bellman":   {"major": [16.8,0.86,12.95,1.41,13.49,11.93,1.25,16.74,1.56,12.81,1.89,12.44],
                   "minor": [18.16,0.69,12.99,13.34,1.07,11.15,1.38,17.2,13.62,1.27,12.79,2.4]}
 }
-
-WEIGHTS = {"global": 0.55, "segments": 0.35, "bass_bonus": 0.10}
 
 # ────────────────────────────────────────────────
 # STYLES CSS
@@ -118,7 +115,7 @@ def vote_profiles(chroma, chroma_cens, bass_chroma):
                 scores[f"{NOTES_LIST[i]} {mode}"] += (combined + bonus) / len(PROFILES)
     return scores
 
-def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
+def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.85):
     ext = file_name.lower().split('.')[-1]
     sr_target = 22050
     try:
@@ -143,13 +140,7 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
     tuning_offset = librosa.estimate_tuning(y=y, sr=sr)
     y_filt = apply_precision_filters(y, sr)
 
-    # Analyse globale
-    chroma_cqt_glob  = np.mean(librosa.feature.chroma_cqt(y=y_filt, sr=sr, tuning=tuning_offset), axis=1)
-    chroma_cens_glob = np.mean(librosa.feature.chroma_cens(y=y_filt, sr=sr, tuning=tuning_offset), axis=1)
-    bass_glob        = np.mean(librosa.feature.chroma_cqt(y=butter_lowpass(y, sr), sr=sr), axis=1)
-    global_scores    = vote_profiles(chroma_cqt_glob, chroma_cens_glob, bass_glob)
-
-    # Analyse segments
+    # ── Analyse SEGMENTS ONLY ──
     seg_duration = 8.0
     step         = 3.0
     segments_starts = np.arange(0, max(0.1, duration - seg_duration), step)
@@ -183,12 +174,12 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
             
             # Boost progressif selon la confiance
             conf = seg_scores[best_key]
-            if conf >= 0.88:
-                weight *= 2.2
-            elif conf >= 0.84:
-                weight *= 1.7
-            elif conf >= 0.80:
-                weight *= 1.3
+            if conf >= 0.92:
+                weight *= 2.4
+            elif conf >= 0.89:
+                weight *= 1.8
+            elif conf >= 0.85:
+                weight *= 1.35
             
             segment_votes[best_key] += conf * weight
             timeline.append({
@@ -199,21 +190,16 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
             valid_segments += 1
             retained_scores.append(conf)
 
-    if not segment_votes and not global_scores:
+    if not segment_votes:
         return None
 
-    # Score final pondéré
-    total_seg = sum(segment_votes.values()) or 1
+    # Score final → uniquement basé sur les segments
+    total_seg = sum(segment_votes.values())
     seg_norm = {k: v / total_seg for k,v in segment_votes.items()}
-    final_scores = Counter()
-    for k in set(global_scores) | set(seg_norm):
-        final_scores[k] = (
-            global_scores.get(k, 0) * WEIGHTS["global"] +
-            seg_norm.get(k, 0)      * WEIGHTS["segments"]
-        )
+    final_scores = seg_norm
 
     best_key, best_raw = final_scores.most_common(1)[0]
-    max_raw = max(final_scores.values()) if final_scores else 1
+    max_raw = max(final_scores.values())
     confidence = min(99, int(100 * best_raw / max_raw * 1.18))
 
     # Détection modulation
@@ -241,14 +227,13 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
         "modulation": modulation,
         "target_camelot": CAMELOT_MAP.get(modulation, "??") if modulation else None,
         "timeline": timeline,
-        "chroma": chroma_cqt_glob.tolist(),
         "valid_segments": valid_segments,
         "duration": round(duration, 1),
         "retention_pct": (valid_segments / len(segments_starts) * 100) if len(segments_starts) > 0 else 0,
         "avg_retained_score": np.mean(retained_scores) if retained_scores else 0
     }
 
-    # Telegram Report
+    # Telegram Report (sans radar)
     if TELEGRAM_TOKEN and CHAT_ID:
         try:
             df_tl = pd.DataFrame(timeline)
@@ -257,16 +242,9 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
             fig_tl.update_layout(height=480, margin=dict(l=20,r=20,t=30,b=20))
             img_tl = fig_tl.to_image(format="png", width=1100, height=520)
 
-            fig_rd = go.Figure(go.Scatterpolar(r=result["chroma"], theta=NOTES_LIST,
-                                               fill='toself', line_color='#10b981'))
-            fig_rd.update_layout(template="plotly_dark", height=520,
-                                 polar=dict(radialaxis=dict(visible=False)),
-                                 margin=dict(l=40,r=40,t=30,b=30))
-            img_rd = fig_rd.to_image(format="png", width=620, height=620)
-
             mod_text = f"**MODULATION →** {modulation.upper()} ({result['target_camelot']})" if modulation else "**STABLE**"
             caption = (
-                f"**RCDJ228 SNIPER M5 RAPPORT – 2026**\n━━━━━━━━━━━━━━━━━\n"
+                f"**RCDJ228 SNIPER M5 – SEGMENTS ONLY 2026**\n━━━━━━━━━━━━━━━━━\n"
                 f"**Track** `{file_name}`\n"
                 f"**Tonalité** `{best_key.upper()}`\n"
                 f"**Camelot** `{result['camelot']}`\n"
@@ -277,10 +255,9 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.78):
                 f"{mod_text}\n━━━━━━━━━━━━━━━━━"
             )
 
-            files = {'p1': ('timeline.png', img_tl, 'image/png'), 'p2': ('radar.png', img_rd, 'image/png')}
+            files = {'p1': ('timeline.png', img_tl, 'image/png')}
             media = [
-                {'type': 'photo', 'media': 'attach://p1', 'caption': caption, 'parse_mode': 'Markdown'},
-                {'type': 'photo', 'media': 'attach://p2'}
+                {'type': 'photo', 'media': 'attach://p1', 'caption': caption, 'parse_mode': 'Markdown'}
             ]
             requests.post(
                 f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMediaGroup",
@@ -319,7 +296,7 @@ def get_chord_test_js(btn_id, key_str):
 # ────────────────────────────────────────────────
 # INTERFACE
 # ────────────────────────────────────────────────
-st.title("🎯 RCDJ228 MUSIC SNIPER M5 — Précision & Granularité 2026")
+st.title("🎯 RCDJ228 MUSIC SNIPER M5 — Segments only • Seuil 85% 2026")
 
 uploaded_files = st.file_uploader("Déposez vos tracks (mp3, wav, flac, m4a)", 
                                  type=['mp3','wav','flac','m4a'], 
@@ -327,18 +304,18 @@ uploaded_files = st.file_uploader("Déposez vos tracks (mp3, wav, flac, m4a)",
 
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2569/2569107.png", width=100)
-    st.header("Sniper M5")
-    st.caption("Hybride 2026 • Précision M4 + Timeline fine + boost conf ≥80%")
+    st.header("Sniper M5 – Segments")
+    st.caption("Segments only • Seuil strict • Boost conf ≥85%")
     
     st.subheader("Réglages fins")
     SEGMENT_THRESHOLD = st.slider(
         "Seuil confiance segment",
-        min_value=0.55,
-        max_value=0.90,
-        value=0.78,
+        min_value=0.70,
+        max_value=0.95,
+        value=0.85,
         step=0.01,
         format="%.2f",
-        help="Plus haut = plus fiable mais timeline plus vide\nPlus bas = plus de points mais risque de bruit"
+        help="0.85+ = très fiable mais peu de segments\n0.75–0.80 = plus de points mais plus de bruit possible"
     )
     if st.button("🔄 Reset cache & relancer"):
         st.cache_data.clear()
@@ -358,7 +335,7 @@ if uploaded_files:
         progress_global.progress(percent)
         status_global.markdown(f"**Analyse {idx+1}/{total}** — {file.name}")
         
-        with st.status(f"Scan M5 → {file.name}", expanded=True) as status:
+        with st.status(f"Scan M5 segments → {file.name}", expanded=True) as status:
             inner_prog = st.progress(0)
             inner_text = st.empty()
             def upd_prog(p, msg):
@@ -370,9 +347,9 @@ if uploaded_files:
 
         if data:
             with results:
-                st.markdown(f"<div class='file-header'>RAPPORT M5 → {data['name']}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='file-header'>RAPPORT M5 SEGMENTS → {data['name']}</div>", unsafe_allow_html=True)
                 
-                bg = "linear-gradient(135deg, #065f46, #064e3b)" if data['conf'] > 87 else "linear-gradient(135deg, #1e293b, #0f172a)"
+                bg = "linear-gradient(135deg, #065f46, #064e3b)" if data['conf'] > 90 else "linear-gradient(135deg, #1e293b, #0f172a)"
                 st.markdown(f"""
                 <div class="report-card" style="background:{bg};">
                     <h1 style="font-size:6.2em; margin:0; font-weight:900;">{data['key'].upper()}</h1>
@@ -404,21 +381,12 @@ if uploaded_files:
                     <script>{get_chord_test_js(btn_id, data['key'])}</script>
                     """, height=130)
 
-                c1, c2 = st.columns([2.3, 1])
-                with c1:
-                    if data["timeline"]:
-                        df = pd.DataFrame(data["timeline"])
-                        fig = px.line(df, x="time", y="key", markers=True, template="plotly_dark",
-                                      category_orders={"key": NOTES_ORDER})
-                        fig.update_layout(height=360, margin=dict(l=12,r=12,t=12,b=12))
-                        st.plotly_chart(fig, use_container_width=True)
-                with c2:
-                    fig_r = go.Figure(go.Scatterpolar(r=data["chroma"], theta=NOTES_LIST,
-                                                      fill='toself', line_color='#22c55e'))
-                    fig_r.update_layout(template="plotly_dark", height=360,
-                                        polar=dict(radialaxis=dict(visible=False)),
-                                        margin=dict(l=24,r=24,t=12,b=12))
-                    st.plotly_chart(fig_r, use_container_width=True)
+                if data["timeline"]:
+                    df = pd.DataFrame(data["timeline"])
+                    fig = px.line(df, x="time", y="key", markers=True, template="plotly_dark",
+                                  category_orders={"key": NOTES_ORDER})
+                    fig.update_layout(height=400, margin=dict(l=12,r=12,t=12,b=12))
+                    st.plotly_chart(fig, use_container_width=True)
 
                 st.markdown("---")
 
