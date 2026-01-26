@@ -1,9 +1,13 @@
+# requirements.txt
+--prefer-binary
+--no-build-isolation
+numpy>=1.23
+cython
+scipy
+madmom
 streamlit
 librosa
-numpy
+pydub
 pandas
 plotly
-scipy
-requests
-pydub
-kaleido==0.2.1
+# ajoute tes autres packages ici
