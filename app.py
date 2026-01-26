@@ -77,7 +77,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- FONCTIONS DE TRAITEMENT (filtrage conservé du code 1) ---
+# --- FONCTIONS DE TRAITEMENT ---
 
 def apply_filters(y, sr):
     y_harm, _ = librosa.effects.hpss(y, margin=(4.0, 1.0))
@@ -137,6 +137,7 @@ def analyze_full_engine(file_bytes, file_name, _progress_callback=None):
     tuning = librosa.estimate_tuning(y=y, sr=sr)
     y_filt = apply_filters(y, sr)
     
+    # Chroma global (on garde la version 24 bins classique pour la signature visuelle)
     chroma_complex = librosa.feature.chroma_cqt(y=y_filt, sr=sr, tuning=tuning, bins_per_octave=24, hop_length=512)
     global_chroma_avg = np.mean(chroma_complex, axis=1)
     
@@ -145,7 +146,7 @@ def analyze_full_engine(file_bytes, file_name, _progress_callback=None):
     global_dom_root = n_s if (n_p + 7) % 12 == n_s else (n_p if (n_s + 7) % 12 == n_p else None)
 
     duration = librosa.get_duration(y=y, sr=sr)
-    step = 2   # <--- plus dense que le code 1 original
+    step = 2
     timeline = []
     votes = Counter()
     
@@ -157,13 +158,20 @@ def analyze_full_engine(file_bytes, file_name, _progress_callback=None):
             prog = int((idx / total_segments) * 100)
             _progress_callback(prog, f"Analyse segment {start}s / {int(duration)}s")
         
-        seg = y_filt[int(start*sr):int((start+step)*sr)]
+        idx_start = int(start * sr)
+        idx_end   = int((start + step) * sr)
+        seg = y_filt[idx_start:idx_end]
         if len(seg) < 1000 or np.max(np.abs(seg)) < 0.01: 
             continue
         
-        c_seg = librosa.feature.chroma_cqt(y=seg, sr=sr, tuning=tuning, bins_per_octave=24)
-        c_avg = np.mean(c_seg, axis=1)
-        res = solve_key(c_avg, global_dom_root=global_dom_root)
+        # === AJOUT demandé : conversion 24→12 bins moyenne ===
+        c_raw = librosa.feature.chroma_cqt(
+            y=seg, sr=sr, tuning=tuning,
+            bins_per_octave=24, hop_length=512
+        )
+        c_avg_12 = np.mean((c_raw[::2, :] + c_raw[1::2, :]) / 2, axis=1)   # ← ici
+        
+        res = solve_key(c_avg_12, global_dom_root=global_dom_root)
         
         if res['score'] < 0.85:
             continue
@@ -194,12 +202,14 @@ def analyze_full_engine(file_bytes, file_name, _progress_callback=None):
     tempo, _ = librosa.beat.beat_track(y=y_perc, sr=sr)
     
     output = {
-        "key": main_key, "camelot": CAMELOT_MAP.get(main_key, "??"),
+        "key": main_key, 
+        "camelot": CAMELOT_MAP.get(main_key, "??"),
         "conf": min(main_conf, 99),
         "tempo": int(float(tempo)),
         "tuning_hz": round(440 * (2**(tuning/12)), 1),
         "pitch_offset": round(tuning, 2),
-        "timeline": timeline, "chroma": global_chroma_avg.tolist(),
+        "timeline": timeline, 
+        "chroma": global_chroma_avg.tolist(),
         "modulation": modulation_detected, 
         "target_key": target_key,
         "target_conf": target_conf,
@@ -276,7 +286,7 @@ def send_telegram_expert(data, fig_timeline, fig_radar):
 # ────────────────────────────────────────────────
 
 st.title("🎧 DJ's Ear Pro Elite  •  Haute Précision")
-st.markdown("Analyse multi-profils • Scan 2s • .m4a support • Telegram groupé")
+st.markdown("Analyse multi-profils • Scan 2s • 24→12 bins moyenné • .m4a support • Telegram groupé")
 
 files = st.file_uploader("Déposez vos morceaux (MP3, WAV, FLAC, M4A)", 
                          type=['mp3','wav','flac','m4a'], 
@@ -367,4 +377,4 @@ if files:
         st.rerun()
 
 else:
-    st.info("Déposez vos fichiers audio pour lancer l’analyse multi-profils (krumhansl / temperley / bellman)")
+    st.info("Déposez vos fichiers audio pour lancer l’analyse (multi-profils + 24→12 bins moyenné sur segments)")
