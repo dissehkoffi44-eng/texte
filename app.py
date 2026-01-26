@@ -13,13 +13,13 @@ from scipy.signal import butter, lfilter
 from pydub import AudioSegment
 import os
 
-# Force ffmpeg path (utile sur certains environnements)
+# ────────────────────────────────────────────────
+#                CONFIGURATION & PATHS
+# ────────────────────────────────────────────────
+
+# Note : On ne force le path ffmpeg que s'il existe localement
 if os.path.exists(r'C:\ffmpeg\bin'):
     os.environ["PATH"] += os.pathsep + r'C:\ffmpeg\bin'
-
-# ────────────────────────────────────────────────
-#               CONFIGURATION
-# ────────────────────────────────────────────────
 
 st.set_page_config(page_title="DJ's Ear Pro Elite", page_icon="🎼", layout="wide")
 
@@ -52,7 +52,7 @@ PROFILES = {
 }
 
 # ────────────────────────────────────────────────
-#                  STYLES
+#                     STYLES
 # ────────────────────────────────────────────────
 
 st.markdown("""
@@ -94,196 +94,122 @@ def filter_original(y, sr):
 def filter_sniper(y, sr):
     y_harm = librosa.effects.harmonic(y, margin=4.0)
     nyq = 0.5 * sr
-    low = 80 / nyq
-    high = 5000 / nyq
+    low, high = 80 / nyq, 5000 / nyq
     b, a = butter(4, [low, high], btype='band')
     return lfilter(b, a, y_harm)
 
 # ────────────────────────────────────────────────
-#             DÉTECTION TONALITÉ
+#              DÉTECTION TONALITÉ
 # ────────────────────────────────────────────────
 
 def solve_key(chroma_vector, global_dom_root=None):
-    best_score = -np.inf
-    best_key = "Inconnu"
-
+    best_score, best_key = -np.inf, "Inconnu"
     try:
         cv = np.asarray(chroma_vector, dtype=np.float64).flatten()
-        if cv.size != 12:
-            return {"key": "Erreur dim", "score": 0.0}
-    except:
-        return {"key": "Erreur conv", "score": 0.0}
+        if cv.size != 12: return {"key": "Erreur dim", "score": 0.0}
+    except: return {"key": "Erreur conv", "score": 0.0}
 
     cv_min, cv_max = cv.min(), cv.max()
-    if cv_max <= cv_min + 1e-12:
-        return {"key": "Silence/Bruit", "score": 0.0}
-
+    if cv_max <= cv_min + 1e-12: return {"key": "Silence", "score": 0.0}
     cv = (cv - cv_min) / (cv_max - cv_min + 1e-10)
 
-    for profile_name, p_data in PROFILES.items():
+    for p_name, p_data in PROFILES.items():
         for mode in ["major", "minor"]:
-            try:
-                profile = np.asarray(p_data[mode], dtype=np.float64)
-                if profile.size != 12:
-                    continue
-            except:
-                continue
-
+            profile = np.asarray(p_data[mode], dtype=np.float64)
             for shift in range(12):
                 rotated = np.roll(profile, shift)
-
-                if cv.shape != rotated.shape:
-                    continue
-
-                try:
-                    corr_matrix = np.corrcoef(cv, rotated)
-                    if corr_matrix.shape != (2,2):
-                        continue
-                    corr = corr_matrix[0, 1]
-                except Exception:
-                    continue
-
-                if not np.isfinite(corr):
-                    corr = -1.0
+                corr = np.corrcoef(cv, rotated)[0, 1]
+                if not np.isfinite(corr): corr = -1.0
 
                 third_idx = (shift + (3 if mode == "minor" else 4)) % 12
-                fifth_idx  = (shift + 7) % 12
-
-                bonus = 0.0
-                if (global_dom_root is not None and
-                    (shift + 7) % 12 == global_dom_root and
-                    cv[global_dom_root] > 0.35):
-                    bonus = 0.18
-
+                fifth_idx = (shift + 7) % 12
+                
+                bonus = 0.18 if (global_dom_root is not None and (shift + 7) % 12 == global_dom_root and cv[global_dom_root] > 0.35) else 0.0
                 score = corr + 0.15 * cv[third_idx] + 0.05 * cv[fifth_idx] + bonus
 
                 if score > best_score:
-                    best_score = score
-                    best_key = f"{NOTES_LIST[shift]} {mode}"
-
-    if best_score < -0.9:
-        best_key = "Non détecté"
-
+                    best_score, best_key = score, f"{NOTES_LIST[shift]} {mode}"
     return {"key": best_key, "score": float(best_score)}
 
 # ────────────────────────────────────────────────
-#               ANALYSE COMPLÈTE (sans callback Streamlit)
+#               ANALYSE ENGINE
 # ────────────────────────────────────────────────
 
 @st.cache_data(show_spinner=False)
 def analyze_full_engine(file_bytes, file_name, filter_type="original"):
-    ext = file_name.rsplit('.', 1)[-1].lower()
     try:
+        ext = file_name.rsplit('.', 1)[-1].lower()
         if ext == 'm4a':
             audio = AudioSegment.from_file(io.BytesIO(file_bytes), format="m4a")
             samples = np.array(audio.get_array_of_samples(), dtype=np.float32)
-            if audio.channels == 2:
-                samples = samples.reshape((-1, 2)).mean(axis=1)
-            y = samples / (1 << 15)
-            sr = audio.frame_rate
-            if sr != 22050:
+            if audio.channels == 2: samples = samples.reshape((-1, 2)).mean(axis=1)
+            y, sr = samples / (1 << 15), audio.frame_rate
+            if sr != 22050: 
                 y = librosa.resample(y, orig_sr=sr, target_sr=22050)
                 sr = 22050
         else:
             with io.BytesIO(file_bytes) as buf:
                 y, sr = librosa.load(buf, sr=22050, mono=True)
-    except Exception as e:
-        st.error(f"Échec lecture {file_name} : {str(e)}")
-        return None
+    except Exception: return None
+
+    if len(y) < 22050: return None # Trop court
 
     tuning = librosa.estimate_tuning(y=y, sr=sr)
-
-    if filter_type == "sniper":
-        y_filt = filter_sniper(y, sr)
-    else:
-        y_filt = filter_original(y, sr)
-
-    chroma_global = librosa.feature.chroma_cqt(y=y_filt, sr=sr, tuning=tuning,
-                                               bins_per_octave=24, hop_length=512)
-    global_chroma_avg = np.mean(chroma_global, axis=1)
-
-    top2 = np.argsort(global_chroma_avg)[-2:]
-    n_p, n_s = top2[1], top2[0]
-    dom_root = n_s if (n_p + 7) % 12 == n_s else (n_p if (n_s + 7) % 12 == n_p else None)
+    y_filt = filter_sniper(y, sr) if filter_type == "sniper" else filter_original(y, sr)
+    
+    chroma_global = librosa.feature.chroma_cqt(y=y_filt, sr=sr, tuning=tuning, bins_per_octave=24)
+    global_avg = np.mean(chroma_global, axis=1)
+    
+    top2 = np.argsort(global_avg)[-2:]
+    dom_root = top2[1] if (top2[0] + 7) % 12 == top2[1] else (top2[0] if (top2[1] + 7) % 12 == top2[0] else None)
 
     duration = librosa.get_duration(y=y, sr=sr)
-    step = 2
-    timeline = []
-    votes = Counter()
+    step, timeline, votes = 2, [], Counter()
 
-    segments = list(range(0, max(1, int(duration) - step), step))
-    total_seg = len(segments)
+    for start_sec in range(0, max(1, int(duration) - step), step):
+        seg = y_filt[int(start_sec * sr):int((start_sec + step) * sr)]
+        if len(seg) < 1000 or np.max(np.abs(seg)) < 0.01: continue
 
-    for idx, start_sec in enumerate(segments):
-        # ────────────────────────────────────────────────
-        #  Plus de callback ici → on ne touche plus aux widgets Streamlit
-        # ────────────────────────────────────────────────
-        start_idx = int(start_sec * sr)
-        end_idx   = int((start_sec + step) * sr)
-        seg = y_filt[start_idx:end_idx]
-
-        if len(seg) < 1000 or np.max(np.abs(seg)) < 0.01:
-            continue
-
-        c_raw = librosa.feature.chroma_cqt(y=seg, sr=sr, tuning=tuning,
-                                           bins_per_octave=24, hop_length=512)
+        c_raw = librosa.feature.chroma_cqt(y=seg, sr=sr, tuning=tuning, bins_per_octave=24)
         c12 = np.mean((c_raw[::2, :] + c_raw[1::2, :]) / 2, axis=1)
-
-        if c12.shape != (12,) or not np.all(np.isfinite(c12)):
-            continue
-
+        
         res = solve_key(c12, global_dom_root=dom_root)
-
-        if res['score'] < 0.82:
-            continue
+        if res['score'] < 0.70: continue # Seuil assoupli pour garantir un résultat
 
         w = 2.0 if start_sec < 10 or start_sec > (duration - 15) else 1.0
         votes[res['key']] += int(res['score'] * 100 * w)
         timeline.append({"Temps": start_sec, "Note": res['key'], "Conf": res['score']})
 
-    if not votes:
-        return None
+    if not votes: return None
 
-    most_common = votes.most_common(2)
-    main_key = most_common[0][0]
+    main_key = votes.most_common(1)[0][0]
     main_conf = int(np.mean([t['Conf'] for t in timeline if t['Note'] == main_key]) * 100)
-
-    mod_detected = False
-    target_key = target_conf = None
-    if len(most_common) > 1:
-        sec_key = most_common[1][0]
-        ratio = votes[sec_key] / sum(votes.values())
-        if ratio > 0.25:
-            mod_detected = True
-            target_key = sec_key
+    
+    mod_detected, target_key, target_conf = False, None, None
+    if len(votes.most_common(2)) > 1:
+        sec_key, sec_val = votes.most_common(2)[1]
+        if (sec_val / sum(votes.values())) > 0.25:
+            mod_detected, target_key = True, sec_key
             target_conf = int(np.mean([t['Conf'] for t in timeline if t['Note'] == sec_key]) * 100)
 
-    _, y_perc = librosa.effects.hpss(y)
-    tempo, _ = librosa.beat.beat_track(y=y_perc, sr=sr)
+    tempo, _ = librosa.beat.beat_track(y=librosa.effects.percussive(y), sr=sr)
 
     return {
-        "key": main_key,
-        "camelot": CAMELOT_MAP.get(main_key, "??"),
-        "conf": min(main_conf, 99),
-        "tempo": int(float(tempo or 0)),
-        "tuning_hz": round(440 * (2 ** (tuning / 12)), 1),
-        "pitch_offset": round(tuning, 2),
-        "timeline": timeline,
-        "chroma": global_chroma_avg.tolist(),
-        "modulation": mod_detected,
-        "target_key": target_key,
-        "target_conf": target_conf,
+        "key": main_key, "camelot": CAMELOT_MAP.get(main_key, "??"),
+        "conf": min(main_conf, 99), "tempo": int(float(tempo or 0)),
+        "tuning_hz": round(440 * (2 ** (tuning / 12)), 1), "pitch_offset": round(tuning, 2),
+        "timeline": timeline, "chroma": global_avg.tolist(),
+        "modulation": mod_detected, "target_key": target_key, "target_conf": target_conf,
         "target_camelot": CAMELOT_MAP.get(target_key, "??") if target_key else None,
         "name": file_name
     }
 
 # ────────────────────────────────────────────────
-#              FONCTIONS UTILITAIRES
+#                UTILITAIRES UI
 # ────────────────────────────────────────────────
 
 def get_piano_js(btn_id, key_name):
-    if not key_name or " " not in key_name:
-        return ""
+    if not key_name or " " not in key_name: return ""
     root, mode = key_name.split()
     return f"""
     document.getElementById('{btn_id}').onclick = function() {{
@@ -293,8 +219,7 @@ def get_piano_js(btn_id, key_name):
         intervals.forEach(i => {{
             const base = freqs['{root}'] * Math.pow(2, i/12);
             [1,2].forEach(h => {{
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
+                const osc = ctx.createOscillator(); const gain = ctx.createGain();
                 osc.type = h===1 ? 'triangle' : 'sine';
                 osc.frequency.setValueAtTime(base * h, ctx.currentTime);
                 gain.gain.setValueAtTime(0, ctx.currentTime);
@@ -307,142 +232,72 @@ def get_piano_js(btn_id, key_name):
     }};
     """
 
-def send_telegram_report(data, fig_timeline, fig_radar):
-    if not TELEGRAM_TOKEN or not CHAT_ID:
-        return
-
-    mod_line = ""
-    if data.get('modulation'):
-        mod_line = f"⚠️ *MODULATION →* `{data['target_key']}` ({data['target_camelot']}) — {data['target_conf']}%\n\n"
-
-    caption = (
-        f"🎼 *DJ's Ear Pro Elite Report*\n"
-        f"━━━━━━━━━━━━━━━━━━━\n"
-        f"📂 *{data['name']}*\n\n"
-        f"**Tonalité** : `{data['key'].upper()}` ({data['camelot']})\n"
-        f"**Confiance** : `{data['conf']}%`\n"
-        f"**Tempo** : `{data['tempo']} BPM`\n"
-        f"**Tuning** : `{data['tuning_hz']} Hz` ({data['pitch_offset']}¢)\n"
-        f"{mod_line}"
-        f"━━━━━━━━━━━━━━━━━━━"
-    )
-
+def send_telegram_report(data, fig_line, fig_polar):
+    if not TELEGRAM_TOKEN or not CHAT_ID: return
     try:
-        img_tl = fig_timeline.to_image(format="png", width=1000, height=500, engine="kaleido")
-        img_rd = fig_radar.to_image(format="png", width=600, height=600, engine="kaleido")
-
-        media = [
-            {'type': 'photo', 'media': 'attach://tl.png', 'caption': caption, 'parse_mode': 'Markdown'},
-            {'type': 'photo', 'media': 'attach://rd.png'}
-        ]
-
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMediaGroup",
-            data={'chat_id': CHAT_ID, 'media': json.dumps(media)},
-            files={'tl.png': img_tl, 'rd.png': img_rd},
-            timeout=20
-        )
-    except Exception as e:
-        st.warning(f"Échec envoi Telegram : {str(e)}")
+        caption = f"🎼 *Report: {data['name']}*\nKey: `{data['key']}` ({data['camelot']})\nTempo: `{data['tempo']} BPM`"
+        img_tl = fig_line.to_image(format="png", engine="kaleido")
+        img_rd = fig_polar.to_image(format="png", engine="kaleido")
+        media = [{'type': 'photo', 'media': 'attach://a.png', 'caption': caption, 'parse_mode': 'Markdown'}, {'type': 'photo', 'media': 'attach://b.png'}]
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMediaGroup", data={'chat_id': CHAT_ID, 'media': json.dumps(media)}, files={'a.png': img_tl, 'b.png': img_rd}, timeout=15)
+    except: pass
 
 # ────────────────────────────────────────────────
-#                  INTERFACE PRINCIPALE
+#                INTERFACE PRINCIPALE
 # ────────────────────────────────────────────────
 
-st.title("🎧 DJ's Ear Pro Elite  •  Analyse Haute Précision")
-st.markdown("Multi-profils • Scan 2 s • 24→12 bins moyenné • Support .m4a • Deux filtres au choix")
+st.title("🎧 DJ's Ear Pro Elite")
 
 with st.sidebar:
-    st.header("Options d'analyse")
-    filter_mode = st.radio(
-        "Style de pré-filtrage audio",
-        options=["Original (HPSS + 100-3000 Hz)", "Sniper (Harmonic + 80-5000 Hz)"],
-        index=0,
-        help="Le filtre 'Sniper' est souvent plus stable sur les productions modernes / électroniques."
-    )
+    filter_mode = st.radio("Style de filtrage", ["Original", "Sniper (Recommandé)"], index=1)
     filter_type = "sniper" if "Sniper" in filter_mode else "original"
+    if st.button("🧹 Vider le cache"):
+        st.cache_data.clear()
+        st.rerun()
 
-uploaded_files = st.file_uploader(
-    "Déposez vos fichiers (MP3, WAV, FLAC, M4A)",
-    type=['mp3', 'wav', 'flac', 'm4a'],
-    accept_multiple_files=True
-)
+uploaded_files = st.file_uploader("Audio (MP3, WAV, M4A)", type=['mp3', 'wav', 'm4a', 'flac'], accept_multiple_files=True)
 
 if uploaded_files:
-    # On inverse pour traiter le dernier arrivé en premier si souhaité
-    files = list(reversed(uploaded_files))
-    
-    for idx, file in enumerate(files):
-        # Création d'un conteneur unique par fichier pour éviter les mélanges
-        file_container = st.container()
-        
-        with file_container:
-            st.markdown(f"<div class='file-header'>Analyse en cours : {file.name}</div>", unsafe_allow_html=True)
-            
-            # Utilisation de st.status pour encapsuler le calcul
-            with st.status(f"Calcul des données pour {file.name}...", expanded=True) as status:
-                file_bytes = file.getvalue()
-                data = analyze_full_engine(file_bytes, file.name, filter_type=filter_type)
-                
-                if data is None:
+    for idx, file in enumerate(reversed(uploaded_files)):
+        container = st.container()
+        with container:
+            with st.status(f"Analyse de {file.name}...", expanded=True) as status:
+                data = analyze_full_engine(file.getvalue(), file.name, filter_type)
+                if data:
+                    status.update(label=f"✅ {file.name} analysé", state="complete", expanded=False)
+                else:
                     status.update(label=f"❌ Erreur sur {file.name}", state="error")
-                    st.error("Impossible d'extraire les données harmoniques.")
+                    st.error("Données harmoniques introuvables. Vérifiez le volume du fichier.")
                     continue
-                
-                status.update(label=f"✅ Analyse terminée : {file.name}", state="complete", expanded=False)
 
-            # --- AFFICHAGE DES RÉSULTATS ---
-            # On s'assure que 'data' existe bien ici
-            st.subheader(f"📊 Rapport : {data['name']}")
-            
-            bg_grad = "linear-gradient(135deg, #0f172a, #1e3a8a)" if not data['modulation'] \
-                      else "linear-gradient(135deg, #1e1b4b, #7f1d1d)"
-
+            # Affichage UI
+            bg = "linear-gradient(135deg, #0f172a, #1e3a8a)" if not data['modulation'] else "linear-gradient(135deg, #1e1b4b, #7f1d1d)"
             st.markdown(f"""
-                <div class="report-card" style="background:{bg_grad};">
-                    <p style="opacity:0.7; letter-spacing:1.5px;">TONALITÉ PRINCIPALE</p>
-                    <h1 style="font-size:5.8em; margin:8px 0;">{data['key'].upper()}</h1>
-                    <p style="font-size:1.9em;">CAMELOT <b>{data['camelot']}</b>  •  Confiance <b>{data['conf']}%</b></p>
-                    {f"<div class='modulation-alert'>⚠️ MODULATION VERS {data['target_key'].upper()} ({data['target_camelot']}) — Conf: {data['target_conf']}%</div>" if data['modulation'] else ""}
+                <div class="report-card" style="background:{bg};">
+                    <p style="opacity:0.7;">TONALITÉ PRINCIPALE</p>
+                    <h1 style="font-size:5em; margin:10px 0;">{data['key'].upper()}</h1>
+                    <h3>CAMELOT {data['camelot']}  •  Confiance {data['conf']}%</h3>
+                    {f"<div class='modulation-alert'>⚠️ MODULATION VERS {data['target_key']} ({data['target_camelot']})</div>" if data['modulation'] else ""}
                 </div>
-                """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
 
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.markdown(f"<div class='metric-box'><b>TEMPO</b><br><span style='font-size:2.4em;'>{data['tempo']}</span><br>BPM</div>", unsafe_allow_html=True)
-            with col2:
-                st.markdown(f"<div class='metric-box'><b>TUNING</b><br><span style='font-size:2.4em;'>{data['tuning_hz']}</span><br>Hz ({data['pitch_offset']}¢)</div>", unsafe_allow_html=True)
-            with col3:
-                btn_id = f"playbtn_{idx}_{hash(file.name)}"
-                components.html(f"""
-                    <button id="{btn_id}" style="width:100%; height:100px; background:linear-gradient(90deg,#4F46E5,#7C3AED); color:white; border:none; border-radius:12px; font-weight:bold; font-size:1.15em; cursor:pointer;">
-                        🎹 JOUER ACCORD
-                    </button>
-                    <script>{get_piano_js(btn_id, data['key'])}</script>
-                    """, height=120)
+            c1, c2, c3 = st.columns(3)
+            c1.markdown(f"<div class='metric-box'><b>TEMPO</b><br><span style='font-size:2em;'>{data['tempo']}</span><br>BPM</div>", unsafe_allow_html=True)
+            c2.markdown(f"<div class='metric-box'><b>TUNING</b><br><span style='font-size:2em;'>{data['tuning_hz']}</span><br>Hz</div>", unsafe_allow_html=True)
+            with c3:
+                bid = f"btn_{idx}"
+                components.html(f'<button id="{bid}" style="width:100%; height:90px; background:#4F46E5; color:white; border-radius:12px; border:none; cursor:pointer; font-weight:bold;">🎹 TESTER L\'ACCORD</button><script>{get_piano_js(bid, data["key"])}</script>', height=100)
 
-            c_left, c_right = st.columns([2.2, 1])
-            with c_left:
-                df = pd.DataFrame(data['timeline'])
-                if not df.empty:
-                    fig_line = px.line(df, x="Temps", y="Note", markers=True, template="plotly_dark",
-                                       category_orders={"Note": NOTES_ORDER}, title="Évolution harmonique")
-                    fig_line.update_layout(height=340, margin=dict(l=10,r=10,t=40,b=10))
-                    st.plotly_chart(fig_line, use_container_width=True)
+            gl, gr = st.columns([2, 1])
+            df = pd.DataFrame(data['timeline'])
+            fig_l = px.line(df, x="Temps", y="Note", markers=True, template="plotly_dark", category_orders={"Note": NOTES_ORDER})
+            gl.plotly_chart(fig_l, use_container_width=True)
 
-            with c_right:
-                fig_polar = go.Figure(go.Scatterpolar(
-                    r=data['chroma'], theta=NOTES_LIST, fill='toself', line_color='#818cf8'))
-                fig_polar.update_layout(template="plotly_dark", height=340,
-                                        title="Signature chromatique",
-                                        margin=dict(l=20,r=20,t=40,b=20),
-                                        polar=dict(radialaxis=dict(visible=False)))
-                st.plotly_chart(fig_polar, use_container_width=True)
+            fig_p = go.Figure(go.Scatterpolar(r=data['chroma'], theta=NOTES_LIST, fill='toself'))
+            fig_p.update_layout(template="plotly_dark", polar=dict(radialaxis=dict(visible=False)))
+            gr.plotly_chart(fig_p, use_container_width=True)
 
-            # Envoi Telegram
-            send_telegram_report(data, fig_line, fig_polar)
-            st.toast(f"Rapport Telegram envoyé pour {file.name}", icon="✅")
-            st.divider() # Séparateur entre les fichiers
-
+            send_telegram_report(data, fig_l, fig_p)
+            st.divider()
 else:
-    st.info("Déposez un ou plusieurs fichiers audio pour démarrer l'analyse.\nVous pouvez choisir entre deux styles de filtrage dans la sidebar.")
+    st.info("En attente de fichiers...")
