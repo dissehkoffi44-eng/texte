@@ -101,7 +101,7 @@ def filter_sniper(y, sr):
     return lfilter(b, a, y_harm)
 
 # ────────────────────────────────────────────────
-#             DÉTECTION TONALITÉ (VERSION ROBUSTE)
+#             DÉTECTION TONALITÉ
 # ────────────────────────────────────────────────
 
 def solve_key(chroma_vector, global_dom_root=None):
@@ -313,7 +313,7 @@ def send_telegram_report(data, fig_timeline, fig_radar):
         return
 
     mod_line = ""
-    if data['modulation']:
+    if data.get('modulation'):
         mod_line = f"⚠️ *MODULATION →* `{data['target_key']}` ({data['target_camelot']}) — {data['target_conf']}%\n\n"
 
     caption = (
@@ -347,7 +347,7 @@ def send_telegram_report(data, fig_timeline, fig_radar):
         st.warning(f"Échec envoi Telegram : {str(e)}")
 
 # ────────────────────────────────────────────────
-#                  INTERFACE
+#                  INTERFACE PRINCIPALE
 # ────────────────────────────────────────────────
 
 st.title("🎧 DJ's Ear Pro Elite  •  Analyse Haute Précision")
@@ -374,17 +374,15 @@ if uploaded_files:
     total = len(files)
 
     progress_area = st.empty()
-    results_container = st.container()          # un seul container pour tous les résultats
+    results_container = st.container()
 
     for idx, file in enumerate(files):
-        # Barre de progression globale (mise à jour pour chaque fichier)
         progress_area.markdown(f"""
             <div style="padding:12px; background:rgba(16,185,129,0.12); border:1px solid #10b981; border-radius:12px; margin:12px 0;">
                 <strong>Analyse {idx+1} / {total}</strong> — {file.name}
             </div>
         """, unsafe_allow_html=True)
 
-        # Container spécifique pour ce fichier
         file_result_container = results_container.container()
 
         with file_result_container:
@@ -405,9 +403,17 @@ if uploaded_files:
 
                 status.update(label=f"Terminé : {file.name}", state="complete", expanded=False)
 
-        # Affichage des résultats (toujours dans le container du fichier)
         if data:
             with file_result_container:
+                # === PARTIE DÉBOGAGE AJOUTÉE ===
+                st.subheader(f"RÉSULTAT — {data['name']}")
+                st.json(data)                           # ← pour vérifier que data est bien remplie
+                st.write("Tempo :", data["tempo"])
+                st.write("Key :", data["key"], data["camelot"])
+                st.write("Confiance :", data["conf"])
+                # === FIN DÉBOGAGE ===
+
+                # Affichage esthétique normal
                 st.markdown(f"<div class='file-header'>RÉSULTAT — {data['name']}</div>", unsafe_allow_html=True)
 
                 bg_grad = "linear-gradient(135deg, #0f172a, #1e3a8a)" if not data['modulation'] \
