@@ -86,7 +86,6 @@ st.markdown("""
 # ────────────────────────────────────────────────
 
 def filter_original(y, sr):
-    """Filtre original : HPSS + pre-emphasis + 100-3000 Hz"""
     y_harm, _ = librosa.effects.hpss(y, margin=(4.0, 1.0))
     y_harm = librosa.effects.preemphasis(y_harm)
     nyq = 0.5 * sr
@@ -94,7 +93,6 @@ def filter_original(y, sr):
     return lfilter(b, a, y_harm)
 
 def filter_sniper(y, sr):
-    """Filtre style Sniper : harmonic + large bande 80-5000 Hz"""
     y_harm = librosa.effects.harmonic(y, margin=4.0)
     nyq = 0.5 * sr
     low = 80 / nyq
@@ -107,14 +105,9 @@ def filter_sniper(y, sr):
 # ────────────────────────────────────────────────
 
 def solve_key(chroma_vector, global_dom_root=None):
-    """
-    Calcule la tonalité la plus probable à partir d'un vecteur chroma (12 bins)
-    avec protection contre les shapes invalides et les NaN/inf
-    """
     best_score = -np.inf
     best_key = "Inconnu"
 
-    # Conversion et vérification stricte
     try:
         cv = np.asarray(chroma_vector, dtype=np.float64).flatten()
         if cv.size != 12:
@@ -122,7 +115,6 @@ def solve_key(chroma_vector, global_dom_root=None):
     except:
         return {"key": "Erreur conv", "score": 0.0}
 
-    # Éviter division par zéro + gérer cas tout à zéro
     cv_min, cv_max = cv.min(), cv.max()
     if cv_max <= cv_min + 1e-12:
         return {"key": "Silence/Bruit", "score": 0.0}
@@ -188,7 +180,7 @@ def analyze_full_engine(file_bytes, file_name, filter_type="original", _progress
             samples = np.array(audio.get_array_of_samples(), dtype=np.float32)
             if audio.channels == 2:
                 samples = samples.reshape((-1, 2)).mean(axis=1)
-            y = samples / (1 << 15)   # normalisation 16-bit
+            y = samples / (1 << 15)
             sr = audio.frame_rate
             if sr != 22050:
                 y = librosa.resample(y, orig_sr=sr, target_sr=22050)
@@ -202,13 +194,11 @@ def analyze_full_engine(file_bytes, file_name, filter_type="original", _progress
 
     tuning = librosa.estimate_tuning(y=y, sr=sr)
 
-    # Sélection du filtre
     if filter_type == "sniper":
         y_filt = filter_sniper(y, sr)
     else:
         y_filt = filter_original(y, sr)
 
-    # Chroma global (24 bins → moyenne 12 bins)
     chroma_global = librosa.feature.chroma_cqt(y=y_filt, sr=sr, tuning=tuning,
                                                bins_per_octave=24, hop_length=512)
     global_chroma_avg = np.mean(chroma_global, axis=1)
@@ -240,13 +230,11 @@ def analyze_full_engine(file_bytes, file_name, filter_type="original", _progress
                                            bins_per_octave=24, hop_length=512)
         c12 = np.mean((c_raw[::2, :] + c_raw[1::2, :]) / 2, axis=1)
 
-        # PROTECTION AJOUTÉE (point 1)
         if c12.shape != (12,) or not np.all(np.isfinite(c12)):
             continue
 
         res = solve_key(c12, global_dom_root=dom_root)
 
-        # Seuil abaissé à 0.82 (point 2)
         if res['score'] < 0.82:
             continue
 
@@ -271,7 +259,6 @@ def analyze_full_engine(file_bytes, file_name, filter_type="original", _progress
             target_key = sec_key
             target_conf = int(np.mean([t['Conf'] for t in timeline if t['Note'] == sec_key]) * 100)
 
-    # Tempo sur percussif
     _, y_perc = librosa.effects.hpss(y)
     tempo, _ = librosa.beat.beat_track(y=y_perc, sr=sr)
 
@@ -387,22 +374,26 @@ if uploaded_files:
     total = len(files)
 
     progress_area = st.empty()
-    results_area = st.container()
+    results_container = st.container()          # un seul container pour tous les résultats
 
     for idx, file in enumerate(files):
+        # Barre de progression globale (mise à jour pour chaque fichier)
         progress_area.markdown(f"""
             <div style="padding:12px; background:rgba(16,185,129,0.12); border:1px solid #10b981; border-radius:12px; margin:12px 0;">
                 <strong>Analyse {idx+1} / {total}</strong> — {file.name}
             </div>
-            """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
 
-        with results_area:
-            with st.status(f"Analyse → {file.name}", expanded=True) as st_status:
+        # Container spécifique pour ce fichier
+        file_result_container = results_container.container()
+
+        with file_result_container:
+            with st.status(f"Analyse → {file.name}", expanded=True) as status:
                 prog_bar = st.progress(0)
                 txt_status = st.empty()
 
                 def update_progress(pct, message):
-                    prog_bar.progress(pct)
+                    prog_bar.progress(pct / 100)
                     txt_status.code(message)
 
                 data = analyze_full_engine(
@@ -412,10 +403,11 @@ if uploaded_files:
                     _progress_callback=update_progress
                 )
 
-                st_status.update(label=f"Terminé : {file.name}", state="complete", expanded=False)
+                status.update(label=f"Terminé : {file.name}", state="complete", expanded=False)
 
+        # Affichage des résultats (toujours dans le container du fichier)
         if data:
-            with results_area:
+            with file_result_container:
                 st.markdown(f"<div class='file-header'>RÉSULTAT — {data['name']}</div>", unsafe_allow_html=True)
 
                 bg_grad = "linear-gradient(135deg, #0f172a, #1e3a8a)" if not data['modulation'] \
