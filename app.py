@@ -1,5 +1,5 @@
-# RCDJ228 MUSIC SNIPER M5 - HYBRIDE 2026 (segments only – seuil 85% + fallback meilleur segment)
-# Moteur segments only – Timeline fine – UI/Telegram premium
+# RCDJ228 MUSIC SNIPER M5 - HYBRIDE 2026 (segments only – seuil 85% + fallback + madmom renfort)
+# Moteur segments only – Timeline fine – UI/Telegram premium + madmom global
 import streamlit as st
 import librosa
 import numpy as np
@@ -14,6 +14,14 @@ import json
 import streamlit.components.v1 as components
 from scipy.signal import butter, lfilter
 from pydub import AudioSegment
+
+# Tentative d'import madmom (optionnel)
+try:
+    from madmom.features.key import KeyRecognitionProcessor, key_class_to_label
+    HAS_MADMOM = True
+except ImportError:
+    HAS_MADMOM = False
+    st.warning("madmom non installé → analyse globale madmom désactivée. Installez via pip install madmom")
 
 # Force FFMPEG (Windows)
 if os.path.exists(r'C:\ffmpeg\bin'):
@@ -81,6 +89,10 @@ st.markdown("""
         background: #4c1d1d; color: #fda4af; padding: 12px; border-radius: 8px; margin: 16px 0;
         border-left: 4px solid #f87171;
     }
+    .madmom-info {
+        background: #1e293b; color: #93c5fd; padding: 12px; border-radius: 8px; margin: 12px 0;
+        border-left: 4px solid #60a5fa;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -144,6 +156,34 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.85):
     tuning_offset = librosa.estimate_tuning(y=y, sr=sr)
     y_filt = apply_precision_filters(y, sr)
 
+    # ── Analyse madmom globale (si disponible) ──
+    madmom_key = None
+    madmom_conf = 0.0
+    madmom_note = None
+
+    if HAS_MADMOM:
+        try:
+            # madmom préfère idéalement 44100 Hz
+            target_sr_madmom = 44100
+            if sr != target_sr_madmom:
+                y_madmom = librosa.resample(y, orig_sr=sr, target_sr=target_sr_madmom)
+            else:
+                y_madmom = y
+
+            processor = KeyRecognitionProcessor()
+            result = processor(y_madmom.astype(np.float32))
+            key_id, probs = result
+            madmom_key_raw = key_class_to_label(key_id)  # ex: 'C major'
+
+            madmom_conf = float(probs[key_id])
+
+            if madmom_conf > 0.70:
+                madmom_key = madmom_key_raw.lower()  # pour matcher vos clés 'c major'
+            else:
+                madmom_note = f"madmom : confiance basse ({madmom_conf:.1%})"
+        except Exception as e:
+            madmom_note = f"madmom erreur : {str(e)[:60]}..."
+
     # ── Analyse SEGMENTS ONLY ──
     seg_duration = 8.0
     step         = 3.0
@@ -174,6 +214,10 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.85):
 
         conf = seg_scores[best_key]
 
+        # Garder TOUS les segments pour fallback
+        timeline.append({"time": start_s + seg_duration/2, "key": best_key, "score": conf})
+        retained_scores.append(conf)
+
         if conf >= threshold:
             weight = 1.45 if 0.18 < (start_s / duration) < 0.82 else 1.0
             
@@ -185,36 +229,45 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.85):
                 weight *= 1.35
             
             segment_votes[best_key] += conf * weight
-            timeline.append({"time": start_s + seg_duration/2, "key": best_key, "score": conf})
             valid_segments += 1
-            retained_scores.append(conf)
-
-        # On garde TOUS les segments calculés pour le fallback
-        timeline.append({"time": start_s + seg_duration/2, "key": best_key, "score": conf})
-        retained_scores.append(conf)
 
     if not retained_scores:
         return None
 
     # ── Construction du résultat ──
-    if segment_votes:  # Cas normal : au moins un segment >= seuil
+    # Calcul vote segments
+    seg_best_key = None
+    seg_conf = 0
+    if segment_votes:
         total_seg = sum(segment_votes.values())
         seg_norm = {k: v / total_seg for k,v in segment_votes.items()}
         final_scores = Counter(seg_norm)
-        best_key, best_raw = final_scores.most_common(1)[0]
+        seg_best_key, seg_best_raw = final_scores.most_common(1)[0]
         max_raw = max(final_scores.values())
-        confidence = min(99, int(100 * best_raw / max_raw * 1.18))
-        note = None
-    else:  # Fallback : aucun segment >= seuil → on prend le meilleur quand même
+        seg_conf = min(99, int(100 * seg_best_raw / max_raw * 1.18))
+
+    # Fusion madmom + segments
+    note = None
+    if madmom_key and madmom_conf > 0.80:
+        best_key = madmom_key
+        confidence = min(99, int(madmom_conf * 100 * 1.1))  # léger boost
+        note = madmom_note or "Priorité madmom (confiance élevée)"
+    elif seg_best_key:
+        best_key = seg_best_key
+        confidence = seg_conf
+        if madmom_note:
+            note = madmom_note
+    else:
+        # Fallback maximal
         if timeline:
             best_overall = max(timeline, key=lambda x: x["score"])
             best_key = best_overall["key"]
-            confidence = min(99, int(best_overall["score"] * 100 * 0.9))  # Pénalité 10%
-            note = "Confiance faible – aucun segment n'atteint le seuil"
+            confidence = min(99, int(best_overall["score"] * 100 * 0.9))
+            note = (madmom_note or "") + " | Confiance très faible – fallback"
         else:
             return None
 
-    # Détection modulation (seulement si assez de points)
+    # Détection modulation (basée sur timeline segments)
     modulation = None
     if len(timeline) >= 8:
         mid = len(timeline) // 2
@@ -245,7 +298,11 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.85):
         "avg_retained_score": np.mean(retained_scores) if retained_scores else 0
     }
     if note:
-        result["note"] = note
+        result["note"] = note.strip(" |")
+
+    if madmom_key:
+        result["madmom_key"] = madmom_key
+        result["madmom_conf"] = int(madmom_conf * 100)
 
     # Telegram Report (sans radar)
     if TELEGRAM_TOKEN and CHAT_ID:
@@ -258,8 +315,12 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.85):
 
             mod_text = f"**MODULATION →** {modulation.upper()} ({result['target_camelot']})" if modulation else "**STABLE**"
             note_text = f"**NOTE** {note.upper()}" if note else ""
+            madmom_text = ""
+            if "madmom_key" in result:
+                madmom_text = f"**madmom global** : {result['madmom_key'].upper()} ({result['madmom_conf']}%)\n"
+
             caption = (
-                f"**RCDJ228 SNIPER M5 – SEGMENTS ONLY 2026**\n━━━━━━━━━━━━━━━━━\n"
+                f"**RCDJ228 SNIPER M5 – SEGMENTS + madmom 2026**\n━━━━━━━━━━━━━━━━━\n"
                 f"**Track** `{file_name}`\n"
                 f"**Tonalité** `{best_key.upper()}`\n"
                 f"**Camelot** `{result['camelot']}`\n"
@@ -267,6 +328,7 @@ def process_audio_m5(file_bytes, file_name, progress_cb=None, threshold=0.85):
                 f"**Tempo** `{result['tempo']} BPM`\n"
                 f"**Accordage** `{result['tuning_hz']} Hz  ({result['tuning_cents']:+.1f}¢)`\n"
                 f"**Segments valides** `{valid_segments}`\n"
+                f"{madmom_text}"
                 f"{mod_text}\n{note_text}\n━━━━━━━━━━━━━━━━━"
             )
 
@@ -311,7 +373,7 @@ def get_chord_test_js(btn_id, key_str):
 # ────────────────────────────────────────────────
 # INTERFACE
 # ────────────────────────────────────────────────
-st.title("🎯 RCDJ228 MUSIC SNIPER M5 — Segments only • Seuil 85% + Fallback 2026")
+st.title("🎯 RCDJ228 MUSIC SNIPER M5 — Segments + madmom • Seuil 85% + Fallback 2026")
 
 uploaded_files = st.file_uploader("Déposez vos tracks (mp3, wav, flac, m4a)", 
                                  type=['mp3','wav','flac','m4a'], 
@@ -319,8 +381,8 @@ uploaded_files = st.file_uploader("Déposez vos tracks (mp3, wav, flac, m4a)",
 
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2569/2569107.png", width=100)
-    st.header("Sniper M5 – Segments")
-    st.caption("Segments only • Seuil strict • Fallback si < seuil")
+    st.header("Sniper M5 – Segments + madmom")
+    st.caption("Segments only + renfort madmom global • Fallback si besoin")
     
     st.subheader("Réglages fins")
     SEGMENT_THRESHOLD = st.slider(
@@ -350,7 +412,7 @@ if uploaded_files:
         progress_global.progress(percent)
         status_global.markdown(f"**Analyse {idx+1}/{total}** — {file.name}")
         
-        with st.status(f"Scan M5 segments → {file.name}", expanded=True) as status:
+        with st.status(f"Scan M5 segments + madmom → {file.name}", expanded=True) as status:
             inner_prog = st.progress(0)
             inner_text = st.empty()
             def upd_prog(p, msg):
@@ -362,7 +424,7 @@ if uploaded_files:
 
         if data:
             with results:
-                st.markdown(f"<div class='file-header'>RAPPORT M5 SEGMENTS → {data['name']}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='file-header'>RAPPORT M5 SEGMENTS + madmom → {data['name']}</div>", unsafe_allow_html=True)
                 
                 bg = "linear-gradient(135deg, #065f46, #064e3b)" if data['conf'] > 90 else "linear-gradient(135deg, #1e293b, #0f172a)"
                 st.markdown(f"""
@@ -377,6 +439,9 @@ if uploaded_files:
 
                 if "note" in data:
                     st.markdown(f"<div class='warning-note'>{data['note']}</div>", unsafe_allow_html=True)
+
+                if "madmom_key" in data:
+                    st.markdown(f"<div class='madmom-info'>madmom global suggère : <b>{data['madmom_key'].upper()}</b> ({data['madmom_conf']}%)</div>", unsafe_allow_html=True)
 
                 st.markdown(f"""
                 <div class="stats-box">
