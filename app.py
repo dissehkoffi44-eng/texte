@@ -1,4 +1,6 @@
 # RCDJ228 SNIPER M3 - VERSION FUSIONNÉE (MOTEUR CODE 2 + ROBUSTESSE CODE 1)
+# Avec détection du moment de modulation
+
 import streamlit as st
 import librosa
 import numpy as np
@@ -16,12 +18,12 @@ from scipy.signal import butter, lfilter
 from datetime import datetime
 from pydub import AudioSegment
 
-# --- FORCE FFMEG PATH (WINDOWS FIX) ---
+# --- FORCE FFMPEG PATH (WINDOWS FIX) ---
 if os.path.exists(r'C:\ffmpeg\bin'):
     os.environ["PATH"] += os.pathsep + r'C:\ffmpeg\bin'
 
 # --- CONFIGURATION SYSTÈME ---
-st.set_page_config(page_title="RCDJ228 MUSIC SNIPER", page_icon=" ", layout="wide")
+st.set_page_config(page_title="RCDJ228 MUSIC SNIPER", page_icon="🎯", layout="wide")
 
 # Récupération des secrets
 TELEGRAM_TOKEN = st.secrets.get("TELEGRAM_TOKEN")
@@ -68,9 +70,10 @@ st.markdown("""
         border-left: 5px solid #10b981;
     }
     .modulation-alert {
-        background: rgba(239, 68, 68, 0.15); color: #f87171;
-        padding: 15px; border-radius: 15px; border: 1px solid #ef4444;
-        margin-top: 20px; font-weight: bold; font-family: 'JetBrains Mono', monospace;
+        background: rgba(239, 68, 68, 0.18); color: #f87171;
+        padding: 16px; border-radius: 12px; border: 1px solid #ef4444;
+        margin: 20px 0; font-weight: bold; font-family: 'JetBrains Mono', monospace;
+        line-height: 1.5;
     }
     .metric-box {
         background: #161b22; border-radius: 15px; padding: 20px; text-align: center; border: 1px solid #30363d;
@@ -99,63 +102,57 @@ def solve_key_sniper(chroma_vector, bass_vector):
     best_overall_score = -1
     best_key = "Unknown"
     
-    # Normalisation des vecteurs
     cv = (chroma_vector - chroma_vector.min()) / (chroma_vector.max() - chroma_vector.min() + 1e-6)
     bv = (bass_vector - bass_vector.min()) / (bass_vector.max() - bass_vector.min() + 1e-6)
     
-    # Dictionnaire pour agréger les scores par clé (moyenne sur tous les profils)
     key_scores = {f"{NOTES_LIST[i]} {mode}": [] for mode in ["major", "minor"] for i in range(12)}
     
     for p_name, p_data in PROFILES.items():
         for mode in ["major", "minor"]:
             for i in range(12):
-                # 1. Calcul de base (Corrélation Krumhansl/Temperley/Bellman)
                 score = np.corrcoef(cv, np.roll(p_data[mode], i))[0, 1]
                 
-                # --- LOGIQUE DE DÉTECTION RELATIVE AMÉLIORÉE (fusionnée et affinée) ---
-                dom_idx = (i + 7) % 12       # Dominante (ex: Mi pour La min)
-                leading_tone = (i + 11) % 12  # Sensible (ex: Sol# pour La min)
+                dom_idx = (i + 7) % 12
+                leading_tone = (i + 11) % 12
                 
                 if mode == "minor":
-                    # Boost séparés pour sensible et dominante, avec seuils affinés
                     if cv[leading_tone] > 0.30:
-                        score *= 1.35  # Boost majeur : la sensible est la preuve ultime du mineur
+                        score *= 1.35
                     if cv[dom_idx] > 0.45:
-                        score *= 1.15  # Boost de confirmation
-                    
-                else:  # mode == "major"
-                    # Pour une tonique majeure à l'index i :
-                    # Si la tonique et la quinte sont très fortes sans sensible mineure
+                        score *= 1.15
+                else:
                     if cv[i] > 0.7 and cv[dom_idx] > 0.6:
                         score *= 1.1
                 
-                # 2. Poids des Basses (Fondamentales) - affiné avec un multiplicateur plus fort
                 if bv[i] > 0.6:
                     score += (bv[i] * 0.25)
                 
-                # 3. Validation des intervalles critiques (Tierces) - bonus augmenté
                 third_idx = (i + 4) % 12 if mode == "major" else (i + 3) % 12
                 if cv[third_idx] > 0.5:
                     score += 0.15
                 
-                # 4. Bonus pour la quinte (séparé pour plus de précision)
                 fifth_idx = (i + 7) % 12
                 if cv[fifth_idx] > 0.5:
-                    score += 0.10  # Bonus modéré pour la quinte
+                    score += 0.10
                 
-                # Agrégation : ajouter le score pour cette clé et ce profil
                 key_name = f"{NOTES_LIST[i]} {mode}"
                 key_scores[key_name].append(score)
     
-    # Calcul de la moyenne des scores par clé sur tous les profils
     for key_name, scores in key_scores.items():
-        if scores:  # S'il y a des scores (toujours vrai ici)
+        if scores:
             avg_score = np.mean(scores)
             if avg_score > best_overall_score:
                 best_overall_score = avg_score
                 best_key = key_name
     
     return {"key": best_key, "score": best_overall_score}
+
+def seconds_to_mmss(seconds):
+    if seconds is None:
+        return "??:??"
+    mins = int(seconds // 60)
+    secs = int(seconds % 60)
+    return f"{mins:02d}:{secs:02d}"
 
 def process_audio_precision(file_bytes, file_name, _progress_callback=None):
     ext = file_name.split('.')[-1].lower()
@@ -181,15 +178,14 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None):
     tuning = librosa.estimate_tuning(y=y, sr=sr)
     y_filt = apply_sniper_filters(y, sr)
 
-    # --- CHANGEMENT ICI : PARAMÈTRES DU CODE 2 ---
     step, timeline, votes = 6, [], Counter()
-    segments = list(range(0, max(1, int(duration) - step), 2)) # On scanne toutes les 2s
+    segments = list(range(0, max(1, int(duration) - step), 2))
     total_segments = len(segments)
     
     for idx, start in enumerate(segments):
         if _progress_callback:
             prog_internal = int((idx / total_segments) * 100)
-            _progress_callback(prog_internal, f"Scan chirurgical : {start}s / {int(duration)}s")
+            _progress_callback(prog_internal, f"Scan : {start}s / {int(duration)}s")
 
         idx_start, idx_end = int(start * sr), int((start + step) * sr)
         seg = y_filt[idx_start:idx_end]
@@ -206,48 +202,91 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None):
         votes[res['key']] += int(res['score'] * 100 * weight)
         timeline.append({"Temps": start, "Note": res['key'], "Conf": res['score']})
 
-    if not votes: return None
+    if not votes:
+        return None
 
     most_common = votes.most_common(2)
     final_key = most_common[0][0]
     final_conf = int(np.mean([t['Conf'] for t in timeline if t['Note'] == final_key]) * 100)
+    
     mod_detected = len(most_common) > 1 and (votes[most_common[1][0]] / max(1, sum(votes.values()))) > 0.25
     target_key = most_common[1][0] if mod_detected else None
-    
+
+    # ─── Détection du moment approximatif de la modulation ────────────────
+    modulation_time = None
+    if mod_detected and target_key:
+        # On cherche le premier moment où la target_key a un score élevé
+        candidates = [t["Temps"] for t in timeline if t["Note"] == target_key and t["Conf"] >= 0.84]
+        
+        if candidates:
+            modulation_time = min(candidates)
+        else:
+            # Sinon on prend le moment où target_key commence à être très présente
+            target_times = [t["Temps"] for t in timeline if t["Note"] == target_key]
+            if target_times:
+                # On prend environ le 30-40% du temps où target_key apparaît
+                sorted_times = sorted(target_times)
+                modulation_time = sorted_times[max(0, len(sorted_times) // 3)]
+
+    # Tempo & chroma global
     tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
     chroma_avg = np.mean(librosa.feature.chroma_cqt(y=y_filt, sr=sr, tuning=tuning), axis=1)
 
     res_obj = {
-        "key": final_key, "camelot": CAMELOT_MAP.get(final_key, "??"),
-        "conf": min(final_conf, 99), "tempo": int(float(tempo)),
-        "tuning": round(440 * (2**(tuning/12)), 1), "timeline": timeline,
-        "chroma": chroma_avg.tolist(), "modulation": mod_detected,
-        "target_key": target_key, "target_camelot": CAMELOT_MAP.get(target_key, "??") if target_key else None,
+        "key": final_key,
+        "camelot": CAMELOT_MAP.get(final_key, "??"),
+        "conf": min(final_conf, 99),
+        "tempo": int(float(tempo)),
+        "tuning": round(440 * (2**(tuning/12)), 1),
+        "timeline": timeline,
+        "chroma": chroma_avg.tolist(),
+        "modulation": mod_detected,
+        "target_key": target_key,
+        "target_camelot": CAMELOT_MAP.get(target_key, "??") if target_key else None,
+        "modulation_time_str": seconds_to_mmss(modulation_time) if mod_detected else None,
         "name": file_name
     }
 
+    # Envoi Telegram (inchangé sauf caption améliorée)
     if TELEGRAM_TOKEN and CHAT_ID:
         try:
             df_tl = pd.DataFrame(timeline)
             fig_tl = px.line(df_tl, x="Temps", y="Note", markers=True, template="plotly_dark", category_orders={"Note": NOTES_ORDER})
             img_tl = fig_tl.to_image(format="png", width=1000, height=500)
+            
             fig_rd = go.Figure(data=go.Scatterpolar(r=res_obj['chroma'], theta=NOTES_LIST, fill='toself', line_color='#10b981'))
             fig_rd.update_layout(template="plotly_dark", polar=dict(radialaxis=dict(visible=False)))
             img_rd = fig_rd.to_image(format="png", width=600, height=600)
+
+            mod_line = ""
+            if mod_detected:
+                mod_line = f"  *MODULATION →* `{target_key.upper()}` ({res_obj['target_camelot']}) ≈ **{res_obj['modulation_time_str']}**"
+
             caption = (f"  *RCDJ228 MUSIC SNIPER - RAPPORT*\n━━━━━━━━━━━━\n"
                        f"  *FICHIER:* `{file_name}`\n"
                        f"  *TONALITÉ:* `{final_key.upper()}`\n"
                        f"  *CAMELOT:* `{res_obj['camelot']}`\n"
                        f"  *CONFIANCE:* `{res_obj['conf']}%`\n"
                        f"  *TEMPO:* `{res_obj['tempo']} BPM`\n"
-                       f"  *ACCORD:* `{res_obj['tuning']} Hz`\n"
-                       f"{'  *MODULATION:* ' + target_key.upper() if mod_detected else '  *STABILITÉ:* OK'}\n━━━━━━━━━━━━")
+                       f"  *ACCORDAGE:* `{res_obj['tuning']} Hz`\n"
+                       f"{mod_line if mod_detected else '  *STABILITÉ TONALE:* OK'}\n━━━━━━━━━━━━")
+            
             files = {'p1': ('timeline.png', img_tl, 'image/png'), 'p2': ('radar.png', img_rd, 'image/png')}
-            media = [{'type': 'photo', 'media': 'attach://p1', 'caption': caption, 'parse_mode': 'Markdown'}, {'type': 'photo', 'media': 'attach://p2'}]
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMediaGroup", data={'chat_id': CHAT_ID, 'media': json.dumps(media)}, files=files, timeout=15)
-        except: pass
+            media = [
+                {'type': 'photo', 'media': 'attach://p1', 'caption': caption, 'parse_mode': 'Markdown'},
+                {'type': 'photo', 'media': 'attach://p2'}
+            ]
+            requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMediaGroup",
+                data={'chat_id': CHAT_ID, 'media': json.dumps(media)},
+                files=files,
+                timeout=20
+            )
+        except Exception:
+            pass
 
-    del y, y_filt; gc.collect()
+    del y, y_filt
+    gc.collect()
     return res_obj
 
 def get_chord_js(btn_id, key_str):
@@ -259,7 +298,8 @@ def get_chord_js(btn_id, key_str):
         const intervals = '{mode}' === 'minor' ? [0, 3, 7, 12] : [0, 4, 7, 12];
         intervals.forEach(i => {{
             const o = ctx.createOscillator(); const g = ctx.createGain();
-            o.type = 'triangle'; o.frequency.setValueAtTime(freqs['{note}'] * Math.pow(2, i/12), ctx.currentTime);
+            o.type = 'triangle'; 
+            o.frequency.setValueAtTime(freqs['{note}'] * Math.pow(2, i/12), ctx.currentTime);
             g.gain.setValueAtTime(0, ctx.currentTime);
             g.gain.linearRampToValueAtTime(0.15, ctx.currentTime + 0.1);
             g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 2.0);
@@ -268,10 +308,17 @@ def get_chord_js(btn_id, key_str):
         }});
     }}; """
 
-# --- INTERFACE PRINCIPALE ---
-st.title(" RCDJ228 MUSIC SNIPER")
+# ────────────────────────────────────────────────
+#               INTERFACE PRINCIPALE
+# ────────────────────────────────────────────────
 
-uploaded_files = st.file_uploader(" Déposez vos fichiers audio", type=['mp3','wav','flac','m4a'], accept_multiple_files=True)
+st.title("🎯 RCDJ228 MUSIC SNIPER")
+
+uploaded_files = st.file_uploader(
+    "Déposez vos fichiers audio (mp3, wav, flac, m4a)",
+    type=['mp3','wav','flac','m4a'],
+    accept_multiple_files=True
+)
 
 if uploaded_files:
     global_progress_placeholder = st.empty()
@@ -280,13 +327,13 @@ if uploaded_files:
     
     for i, f in enumerate(reversed(uploaded_files)):
         global_progress_placeholder.markdown(f"""
-            <div style="padding:15px; border-radius:15px; background-color:rgba(16, 185, 129, 0.1); border:1px solid #10b981; margin-bottom:20px;">
-                <h3 style="margin:0; color:#10b981;"> ANALYSE EN COURS : {i+1} / {total_files}</h3>
-                <p style="margin:5px 0 0 0; opacity:0.8;">Fichier actuel : {f.name}</p>
+            <div style="padding:15px; border-radius:15px; background-color:rgba(16,185,129,0.12); border:1px solid #10b981; margin-bottom:20px;">
+                <h3 style="margin:0; color:#10b981;">Analyse en cours : {i+1} / {total_files}</h3>
+                <p style="margin:6px 0 0 0; opacity:0.85;">{f.name}</p>
             </div>
             """, unsafe_allow_html=True)
 
-        with st.status(f" Sniper scan : `{f.name}`", expanded=True) as status:
+        with st.status(f"Analyse → {f.name}", expanded=True) as status:
             inner_bar = st.progress(0)
             status_text = st.empty()
             
@@ -295,45 +342,77 @@ if uploaded_files:
                 status_text.code(msg)
 
             audio_bytes = f.getvalue()
-            data = process_audio_precision(audio_bytes, f.name, _progress_callback=update_progress)
-            status.update(label=f" {f.name} analysé", state="complete", expanded=False)
+            data = process_audio_precision(audio_bytes, f.name, update_progress)
+            status.update(label=f"{f.name} terminé", state="complete", expanded=False)
 
         if data:
             with results_container:
-                st.markdown(f"<div class='file-header'> ANALYSE TERMINÉE : {data['name']}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='file-header'> {data['name']}</div>", unsafe_allow_html=True)
+                
                 color = "linear-gradient(135deg, #065f46, #064e3b)" if data['conf'] > 85 else "linear-gradient(135deg, #1e293b, #0f172a)"
                 st.markdown(f"""
                     <div class="report-card" style="background:{color};">
-                        <h1 style="font-size:5.5em; margin:10px 0; font-weight:900;">{data['key'].upper()}</h1>
-                        <p style="font-size:1.5em; opacity:0.9;">CAMELOT: <b>{data['camelot']}</b> | CONFIANCE: <b>{data['conf']}%</b></p>
-                        {f"<div class='modulation-alert'> MODULATION DÉTECTÉE : {data['target_key'].upper()} ({data['target_camelot']})</div>" if data['modulation'] else ""}
-                    </div> """, unsafe_allow_html=True)
+                        <h1 style="font-size:5.4em; margin:8px 0; font-weight:900;">{data['key'].upper()}</h1>
+                        <p style="font-size:1.5em; opacity:0.92;">
+                            CAMELOT <b>{data['camelot']}</b>  •  Confiance <b>{data['conf']}%</b>
+                        </p>
+                        {f'''
+                        <div class="modulation-alert">
+                            MODULATION DÉTECTÉE → {data['target_key'].upper()} ({data['target_camelot']})<br>
+                            <span style="color:#fbbf24; font-size:1.1em;">≈ {data['modulation_time_str']}</span>
+                        </div>
+                        ''' if data['modulation'] else ""}
+                    </div>
+                    """, unsafe_allow_html=True)
                 
                 m1, m2, m3 = st.columns(3)
-                with m1: st.markdown(f"<div class='metric-box'><b>TEMPO</b><br><span style='font-size:2em; color:#10b981;'>{data['tempo']}</span><br>BPM</div>", unsafe_allow_html=True)
-                with m2: st.markdown(f"<div class='metric-box'><b>ACCORDAGE</b><br><span style='font-size:2em; color:#58a6ff;'>{data['tuning']}</span><br>Hz</div>", unsafe_allow_html=True)
+                with m1: 
+                    st.markdown(f"<div class='metric-box'><b>TEMPO</b><br><span style='font-size:2.4em; color:#10b981;'>{data['tempo']}</span><br>BPM</div>", unsafe_allow_html=True)
+                with m2: 
+                    st.markdown(f"<div class='metric-box'><b>ACCORDAGE</b><br><span style='font-size:2.2em; color:#58a6ff;'>{data['tuning']}</span><br>Hz</div>", unsafe_allow_html=True)
                 with m3:
                     btn_id = f"play_{i}_{hash(data['name'])}"
-                    components.html(f"""<button id="{btn_id}" style="width:100%; height:95px; background:linear-gradient(45deg, #4F46E5, #7C3AED); color:white; border:none; border-radius:15px; cursor:pointer; font-weight:bold;"> TESTER L'ACCORD</button>
-                                    <script>{get_chord_js(btn_id, data['key'])}</script>""", height=110)
+                    components.html(f"""
+                        <button id="{btn_id}" style="width:100%; height:95px; background:linear-gradient(45deg, #4F46E5, #7C3AED); color:white; border:none; border-radius:15px; cursor:pointer; font-weight:bold; font-size:1.1em;">
+                            TESTER L'ACCORD
+                        </button>
+                        <script>{get_chord_js(btn_id, data['key'])}</script>
+                    """, height=110)
 
                 c1, c2 = st.columns([2, 1])
                 with c1: 
-                    fig_tl = px.line(pd.DataFrame(data['timeline']), x="Temps", y="Note", markers=True, template="plotly_dark", category_orders={"Note": NOTES_ORDER})
-                    fig_tl.update_layout(height=300, margin=dict(l=0, r=0, t=20, b=0))
-                    st.plotly_chart(fig_tl, use_container_width=True, key=f"tl_plot_{i}_{hash(f.name)}")
-                with c2: 
-                    fig_rd = go.Figure(data=go.Scatterpolar(r=data['chroma'], theta=NOTES_LIST, fill='toself', line_color='#10b981'))
-                    fig_rd.update_layout(template="plotly_dark", height=300, polar=dict(radialaxis=dict(visible=False)), margin=dict(l=30, r=30, t=20, b=20))
-                    st.plotly_chart(fig_rd, use_container_width=True, key=f"rd_plot_{i}_{hash(f.name)}")
+                    fig_tl = px.line(
+                        pd.DataFrame(data['timeline']), 
+                        x="Temps", y="Note", 
+                        markers=True, 
+                        template="plotly_dark", 
+                        category_orders={"Note": NOTES_ORDER}
+                    )
+                    fig_tl.update_layout(height=320, margin=dict(l=0,r=0,t=20,b=0))
+                    st.plotly_chart(fig_tl, use_container_width=True, key=f"tl_{i}_{hash(f.name)}")
                 
-                st.markdown("<hr style='border-color: #30363d; margin-bottom:40px;'>", unsafe_allow_html=True)
+                with c2: 
+                    fig_rd = go.Figure(data=go.Scatterpolar(
+                        r=data['chroma'], 
+                        theta=NOTES_LIST, 
+                        fill='toself', 
+                        line_color='#10b981'
+                    ))
+                    fig_rd.update_layout(
+                        template="plotly_dark", 
+                        height=320, 
+                        polar=dict(radialaxis=dict(visible=False)),
+                        margin=dict(l=30,r=30,t=20,b=20)
+                    )
+                    st.plotly_chart(fig_rd, use_container_width=True, key=f"rd_{i}_{hash(f.name)}")
+                
+                st.markdown("<hr style='border-color:#30363d; margin:40px 0 30px 0;'>", unsafe_allow_html=True)
 
-    global_progress_placeholder.success(f" Mission terminée : {total_files} fichiers analysés avec succès !")
+    global_progress_placeholder.success(f"Analyse terminée — {total_files} piste(s) traitée(s) avec succès !")
 
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2569/2569107.png", width=80)
-    st.header("Sniper Control")
-    if st.button(" Vider la file d'analyse"):
+    st.header("Contrôles Sniper")
+    if st.button("🔄 Vider le cache & relancer"):
         st.cache_data.clear()
         st.rerun()
