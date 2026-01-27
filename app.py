@@ -144,7 +144,7 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None):
 
     # --- PARAMÈTRES AMÉLIORÉS ---
     step, timeline, votes = 6, [], Counter()
-    segments = list(range(0, max(1, int(duration) - step), 2))  # Scan toutes les 2s
+    segments = list(range(0, max(1, int(duration) - step), 3))  # Scan toutes les 2s
     total_segments = len(segments)
     
     for idx, start in enumerate(segments):
