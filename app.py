@@ -1,6 +1,7 @@
 # RCDJ228 SNIPER M3 - VERSION FUSIONNÉE (MOTEUR CODE 2 + ROBUSTESSE CODE 1)
 # Avec détection moment modulation + % en target + fin en target
 # + Conseils de mix harmonique basés sur la checklist
+# + CONSEIL RAPIDE MIX dans le rapport Telegram (version ultra-résumée)
 
 import streamlit as st
 import librosa
@@ -72,11 +73,7 @@ def get_neighbor_camelot(camelot_str: str, offset: int) -> str:
 
 def get_mixing_advice(data):
     """
-    Génère les conseils de mix suivant EXACTEMENT la checklist fournie :
-    - Regarde si fin en target
-    - Regarde le % en target (>40-45%)
-    - Mentionne toujours le moment de bascule + évite long mix
-    - Propose montée volontaire +3/+7 si fin en target ou % élevé
+    Génère les conseils de mix suivant EXACTEMENT la checklist fournie
     """
     if not data.get('modulation', False):
         return None
@@ -92,7 +89,6 @@ def get_mixing_advice(data):
 
     lines.append("**Checklist mix harmonique – ce que tu dois faire :**")
 
-    # 1. Fin en target ?
     if ends_in_target:
         lines.append(f"✅ **Oui : le morceau termine dans {target_key.upper()} ({target_camelot})**")
         lines.append("   → **Privilégie cette tonalité pour le track suivant**")
@@ -102,10 +98,9 @@ def get_mixing_advice(data):
         lines.append("   → La tonalité de sortie reste plutôt " + principal_camelot)
         priority = "principal"
 
-    # 2. Pourcentage en target
     if perc > 45:
         lines.append(f"✅ **Pourcentage très élevé ({perc:.1f}%)** → traite ce track presque comme s'il était en **{target_camelot}**")
-        priority = "target"  # on force la priorité target si très fort %
+        priority = "target"
     elif perc > 25:
         lines.append(f"ℹ️ **Pourcentage significatif ({perc:.1f}%)** → la target est importante")
         lines.append("   → Tu peux sortir après la bascule pour utiliser la target")
@@ -113,11 +108,9 @@ def get_mixing_advice(data):
         lines.append(f"🔸 **Pourcentage faible ({perc:.1f}%)** → modulation plutôt ponctuelle")
         lines.append("   → Tu peux rester sur la tonalité principale pour plus de sécurité")
 
-    # 3. Moment de bascule – TOUJOURS affiché
     lines.append(f"⚠️ **Moment de bascule ≈ {time_str}**")
     lines.append("   → **Évite de faire un long mix pile à cet endroit** (chevauchement de tonalités = risque de clash harmonique)")
 
-    # 4. Montée d'énergie volontaire (+3 / +7)
     if ends_in_target or perc > 40:
         lines.append("")
         lines.append("**🚀 Pour une montée d’énergie volontaire :**")
@@ -125,7 +118,6 @@ def get_mixing_advice(data):
         lines.append(f"     Ex : {target_camelot} → **{get_neighbor_camelot(target_camelot, 3)}** ou **{get_neighbor_camelot(target_camelot, 7)}**")
         lines.append("     → C’est une vraie « modulation DJ » qui donne du punch !")
 
-    # Synthèse finale
     lines.append("")
     lines.append("**Choix le plus safe pour le track suivant :**")
     if priority == "target":
@@ -300,7 +292,6 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None):
 
     modulation_time = None
     target_percentage = 0
-    final_percentage = 100
     ends_in_target = False
 
     if mod_detected and target_key:
@@ -318,7 +309,6 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None):
             target_count = sum(1 for t in timeline if t["Note"] == target_key)
             final_count = sum(1 for t in timeline if t["Note"] == final_key)
             target_percentage = (target_count / total_valid) * 100
-            final_percentage = (final_count / total_valid) * 100
 
         if timeline:
             last_n = max(5, len(timeline) // 10)
@@ -371,7 +361,23 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None):
                        f"  *TEMPO:* `{res_obj['tempo']} BPM`\n"
                        f"  *ACCORDAGE:* `{res_obj['tuning']} Hz`\n"
                        f"{mod_line if mod_detected else '  *STABILITÉ TONALE:* OK'}\n━━━━━━━━━━━━")
+
+            # ─── AJOUT : CONSEIL RAPIDE MIX EN VERSION ULTRA-RÉSUMÉE ───
+            advice_text = get_mixing_advice(res_obj)
+            summary_advice = ""
+            if advice_text:
+                if "fin en target" in advice_text or "Oui : le morceau termine" in advice_text:
+                    summary_advice = f"→ Termine en {res_obj['target_camelot']} → privilégie cette tonalité pour le suivant !"
+                elif res_obj.get('mod_target_percentage', 0) > 45:
+                    summary_advice = f"→ {res_obj['target_camelot']} très présent → traite presque comme track en {res_obj['target_camelot']}"
+                else:
+                    summary_advice = "→ Modulation ponctuelle → reste sur tonalité principale"
             
+            if summary_advice:
+                caption += f"\n\n*Conseil rapide mix :* {summary_advice}"
+            else:
+                caption += "\n\n*Pas de modulation détectée → mix safe sur la tonalité principale*"
+
             files = {'p1': ('timeline.png', img_tl, 'image/png'), 'p2': ('radar.png', img_rd, 'image/png')}
             media = [
                 {'type': 'photo', 'media': 'attach://p1', 'caption': caption, 'parse_mode': 'Markdown'},
@@ -452,7 +458,6 @@ if uploaded_files:
                 
                 color = "linear-gradient(135deg, #065f46, #064e3b)" if data['conf'] > 85 else "linear-gradient(135deg, #1e293b, #0f172a)"
 
-                # Bloc modulation enrichi
                 mod_alert = ""
                 if data.get('modulation'):
                     perc = data.get('mod_target_percentage', 0)
@@ -486,7 +491,6 @@ if uploaded_files:
                     </div>
                     """, unsafe_allow_html=True)
                 
-                # ──── AJOUT : CONSEILS MIX HARMONIQUE ────
                 advice = get_mixing_advice(data)
                 if advice:
                     with st.expander("📋 Checklist MIX – que faire avec ce track ?", expanded=True):
