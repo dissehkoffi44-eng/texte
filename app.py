@@ -1,5 +1,5 @@
 # RCDJ228 SNIPER M3 - VERSION FUSIONNÉE (MOTEUR CODE 2 + ROBUSTESSE CODE 1)
-# Avec détection du moment de modulation + correction affichage HTML modulation
+# Avec détection moment modulation + % en target + fin en target
 
 import streamlit as st
 import librosa
@@ -70,10 +70,16 @@ st.markdown("""
         border-left: 5px solid #10b981;
     }
     .modulation-alert {
-        background: rgba(239, 68, 68, 0.18); color: #f87171;
-        padding: 16px; border-radius: 12px; border: 1px solid #ef4444;
+        background: rgba(239, 68, 68, 0.20); color: #fca5a5;
+        padding: 18px; border-radius: 12px; border: 1px solid #ef4444;
         margin: 20px 0; font-weight: bold; font-family: 'JetBrains Mono', monospace;
-        line-height: 1.5;
+        line-height: 1.6; font-size: 1.05em;
+    }
+    .modulation-alert .detail {
+        color: #fbbf24; font-size: 1.1em;
+    }
+    .modulation-alert .nature {
+        font-size: 0.92em; opacity: 0.85; color: #fca5a5;
     }
     .metric-box {
         background: #161b22; border-radius: 15px; padding: 20px; text-align: center; border: 1px solid #30363d;
@@ -213,6 +219,10 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None):
     target_key = most_common[1][0] if mod_detected else None
 
     modulation_time = None
+    target_percentage = 0
+    final_percentage = 100
+    ends_in_target = False
+
     if mod_detected and target_key:
         candidates = [t["Temps"] for t in timeline if t["Note"] == target_key and t["Conf"] >= 0.84]
         if candidates:
@@ -222,6 +232,23 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None):
             if target_times:
                 sorted_times = sorted(target_times)
                 modulation_time = sorted_times[max(0, len(sorted_times) // 3)]
+
+        # 1. Pourcentage du morceau en target_key
+        total_valid = len(timeline)
+        if total_valid > 0:
+            target_count = sum(1 for t in timeline if t["Note"] == target_key)
+            final_count = sum(1 for t in timeline if t["Note"] == final_key)
+            target_percentage = (target_count / total_valid) * 100
+            final_percentage = (final_count / total_valid) * 100
+
+        # 2. Est-ce que le morceau se termine en target_key ?
+        if timeline:
+            # On regarde les ~10% derniers segments (ou min 5)
+            last_n = max(5, len(timeline) // 10)
+            last_segments = timeline[-last_n:]
+            last_counter = Counter(s["Note"] for s in last_segments)
+            last_key = last_counter.most_common(1)[0][0]
+            ends_in_target = (last_key == target_key)
 
     tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
     chroma_avg = np.mean(librosa.feature.chroma_cqt(y=y_filt, sr=sr, tuning=tuning), axis=1)
@@ -238,6 +265,8 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None):
         "target_key": target_key,
         "target_camelot": CAMELOT_MAP.get(target_key, "??") if target_key else None,
         "modulation_time_str": seconds_to_mmss(modulation_time) if mod_detected else None,
+        "mod_target_percentage": round(target_percentage, 1) if mod_detected else 0,
+        "mod_ends_in_target": ends_in_target if mod_detected else False,
         "name": file_name
     }
 
@@ -253,7 +282,9 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None):
 
             mod_line = ""
             if mod_detected:
-                mod_line = f"  *MODULATION →* `{target_key.upper()}` ({res_obj['target_camelot']}) ≈ **{res_obj['modulation_time_str']}**"
+                perc = res_obj["mod_target_percentage"]
+                end_txt = " → **fin en " + target_key.upper() + "**" if res_obj["mod_ends_in_target"] else ""
+                mod_line = f"  *MODULATION →* `{target_key.upper()}` ({res_obj['target_camelot']}) ≈ **{res_obj['modulation_time_str']}** ({perc}%){end_txt}"
 
             caption = (f"  *RCDJ228 MUSIC SNIPER - RAPPORT*\n━━━━━━━━━━━━\n"
                        f"  *FICHIER:* `{file_name}`\n"
@@ -344,13 +375,27 @@ if uploaded_files:
                 
                 color = "linear-gradient(135deg, #065f46, #064e3b)" if data['conf'] > 85 else "linear-gradient(135deg, #1e293b, #0f172a)"
 
-                # ─── Correction : on crée la partie modulation séparément ───
+                # Bloc modulation enrichi
                 mod_alert = ""
-                if data.get('modulation') and data.get('modulation_time_str'):
+                if data.get('modulation'):
+                    perc = data.get('mod_target_percentage', 0)
+                    ends_in_target = data.get('mod_ends_in_target', False)
+                    time_str = data.get('modulation_time_str', '??:??')
+                    
+                    if perc < 25:
+                        nature = "passage court / ponctuel"
+                    elif perc < 50:
+                        nature = "section significative"
+                    else:
+                        nature = "dominante sur une grande partie"
+
+                    end_txt = " → **fin en " + data['target_key'].upper() + "**" if ends_in_target else ""
+                    
                     mod_alert = f"""
                         <div class="modulation-alert">
-                            MODULATION DÉTECTÉE → {data['target_key'].upper()} ({data['target_camelot']})<br>
-                            <span style="color:#fbbf24; font-size:1.1em;">≈ {data['modulation_time_str']}</span>
+                            MODULATION → {data['target_key'].upper()} ({data['target_camelot']})<br>
+                            <span class="detail">≈ {time_str} – {perc}% du morceau{end_txt}</span><br>
+                            <span class="nature">({nature})</span>
                         </div>
                     """.strip()
 
