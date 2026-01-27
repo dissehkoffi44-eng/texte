@@ -1,5 +1,6 @@
 # RCDJ228 SNIPER M3 - VERSION FUSIONNÉE (MOTEUR CODE 2 + ROBUSTESSE CODE 1)
 # Avec détection moment modulation + % en target + fin en target
+# + Conseils de mix harmonique basés sur la checklist
 
 import streamlit as st
 import librosa
@@ -54,6 +55,85 @@ PROFILES = {
         "minor": [18.16, 0.69, 12.99, 13.34, 1.07, 11.15, 1.38, 17.2, 13.62, 1.27, 12.79, 2.4]
     }
 }
+
+# --- FONCTIONS UTILITAIRES POUR LES CONSEILS MIX ---
+
+def get_neighbor_camelot(camelot_str: str, offset: int) -> str:
+    """Retourne le Camelot voisin avec l'offset donné (modulo 12)"""
+    if camelot_str in ['??', None, '']:
+        return '??'
+    try:
+        num = int(camelot_str[:-1])
+        wheel = camelot_str[-1]  # A ou B
+        new_num = ((num - 1 + offset) % 12) + 1
+        return f"{new_num}{wheel}"
+    except:
+        return '??'
+
+def get_mixing_advice(data):
+    """
+    Génère les conseils de mix suivant EXACTEMENT la checklist fournie :
+    - Regarde si fin en target
+    - Regarde le % en target (>40-45%)
+    - Mentionne toujours le moment de bascule + évite long mix
+    - Propose montée volontaire +3/+7 si fin en target ou % élevé
+    """
+    if not data.get('modulation', False):
+        return None
+
+    principal_camelot = data.get('camelot', '??')
+    target_key       = data.get('target_key', 'Inconnu')
+    target_camelot   = data.get('target_camelot', '??')
+    perc             = data.get('mod_target_percentage', 0)
+    ends_in_target   = data.get('mod_ends_in_target', False)
+    time_str         = data.get('modulation_time_str', '??:??')
+
+    lines = []
+
+    lines.append("**Checklist mix harmonique – ce que tu dois faire :**")
+
+    # 1. Fin en target ?
+    if ends_in_target:
+        lines.append(f"✅ **Oui : le morceau termine dans {target_key.upper()} ({target_camelot})**")
+        lines.append("   → **Privilégie cette tonalité pour le track suivant**")
+        priority = "target"
+    else:
+        lines.append(f"⚠️ **Non : ne termine pas en {target_key.upper()} ({target_camelot})**")
+        lines.append("   → La tonalité de sortie reste plutôt " + principal_camelot)
+        priority = "principal"
+
+    # 2. Pourcentage en target
+    if perc > 45:
+        lines.append(f"✅ **Pourcentage très élevé ({perc:.1f}%)** → traite ce track presque comme s'il était en **{target_camelot}**")
+        priority = "target"  # on force la priorité target si très fort %
+    elif perc > 25:
+        lines.append(f"ℹ️ **Pourcentage significatif ({perc:.1f}%)** → la target est importante")
+        lines.append("   → Tu peux sortir après la bascule pour utiliser la target")
+    else:
+        lines.append(f"🔸 **Pourcentage faible ({perc:.1f}%)** → modulation plutôt ponctuelle")
+        lines.append("   → Tu peux rester sur la tonalité principale pour plus de sécurité")
+
+    # 3. Moment de bascule – TOUJOURS affiché
+    lines.append(f"⚠️ **Moment de bascule ≈ {time_str}**")
+    lines.append("   → **Évite de faire un long mix pile à cet endroit** (chevauchement de tonalités = risque de clash harmonique)")
+
+    # 4. Montée d'énergie volontaire (+3 / +7)
+    if ends_in_target or perc > 40:
+        lines.append("")
+        lines.append("**🚀 Pour une montée d’énergie volontaire :**")
+        lines.append(f"   → Sors sur la fin → enchaîne sur un track **+3** ou **+7** depuis **{target_camelot}**")
+        lines.append(f"     Ex : {target_camelot} → **{get_neighbor_camelot(target_camelot, 3)}** ou **{get_neighbor_camelot(target_camelot, 7)}**")
+        lines.append("     → C’est une vraie « modulation DJ » qui donne du punch !")
+
+    # Synthèse finale
+    lines.append("")
+    lines.append("**Choix le plus safe pour le track suivant :**")
+    if priority == "target":
+        lines.append(f"→ **{target_camelot}** ou voisins (±1 sur la même roue A/B)")
+    else:
+        lines.append(f"→ **{principal_camelot}** ou voisins (±1)")
+
+    return "\n".join(lines)
 
 # --- STYLES CSS ---
 st.markdown("""
@@ -233,7 +313,6 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None):
                 sorted_times = sorted(target_times)
                 modulation_time = sorted_times[max(0, len(sorted_times) // 3)]
 
-        # 1. Pourcentage du morceau en target_key
         total_valid = len(timeline)
         if total_valid > 0:
             target_count = sum(1 for t in timeline if t["Note"] == target_key)
@@ -241,9 +320,7 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None):
             target_percentage = (target_count / total_valid) * 100
             final_percentage = (final_count / total_valid) * 100
 
-        # 2. Est-ce que le morceau se termine en target_key ?
         if timeline:
-            # On regarde les ~10% derniers segments (ou min 5)
             last_n = max(5, len(timeline) // 10)
             last_segments = timeline[-last_n:]
             last_counter = Counter(s["Note"] for s in last_segments)
@@ -409,6 +486,28 @@ if uploaded_files:
                     </div>
                     """, unsafe_allow_html=True)
                 
+                # ──── AJOUT : CONSEILS MIX HARMONIQUE ────
+                advice = get_mixing_advice(data)
+                if advice:
+                    with st.expander("📋 Checklist MIX – que faire avec ce track ?", expanded=True):
+                        st.markdown(
+                            f"""
+                            <div style="
+                                background: linear-gradient(135deg, rgba(16,185,129,0.10), rgba(16,185,129,0.04));
+                                border: 1px solid rgba(16,185,129,0.4);
+                                border-radius: 12px;
+                                padding: 20px 24px;
+                                margin: 16px 0;
+                                line-height: 1.65;
+                                font-size: 1.02em;
+                                white-space: pre-wrap;
+                            ">
+                            {advice}
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+
                 m1, m2, m3 = st.columns(3)
                 with m1: 
                     st.markdown(f"<div class='metric-box'><b>TEMPO</b><br><span style='font-size:2.4em; color:#10b981;'>{data['tempo']}</span><br>BPM</div>", unsafe_allow_html=True)
