@@ -1,5 +1,5 @@
 # RCDJ228 SNIPER M3 - VERSION FUSIONNÉE (MOTEUR CODE 2 + ROBUSTESSE CODE 1)
-# Avec détection du moment de modulation
+# Avec détection du moment de modulation + correction affichage HTML modulation
 
 import streamlit as st
 import librosa
@@ -56,26 +56,6 @@ PROFILES = {
 }
 
 # --- STYLES CSS ---
-# Juste avant st.markdown(...)
-mod_alert = ""
-if data['modulation'] and data.get('modulation_time_str'):
-    mod_alert = f"""
-        <div class="modulation-alert">
-            MODULATION DÉTECTÉE → {data['target_key'].upper()} ({data['target_camelot']})<br>
-            <span style="color:#fbbf24; font-size:1.1em;">≈ {data['modulation_time_str']}</span>
-        </div>
-    """.strip()
-
-# Puis dans le st.markdown :
-st.markdown(f"""
-    <div class="report-card" style="background:{color};">
-        <h1 style="font-size:5.4em; margin:8px 0; font-weight:900;">{data['key'].upper()}</h1>
-        <p style="font-size:1.5em; opacity:0.92;">
-            CAMELOT <b>{data['camelot']}</b>  •  Confiance <b>{data['conf']}%</b>
-        </p>
-        {mod_alert}
-    </div>
-""", unsafe_allow_html=True)
 st.markdown("""
     <style>
     .main { background-color: #0b0e14; }
@@ -232,23 +212,17 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None):
     mod_detected = len(most_common) > 1 and (votes[most_common[1][0]] / max(1, sum(votes.values()))) > 0.25
     target_key = most_common[1][0] if mod_detected else None
 
-    # ─── Détection du moment approximatif de la modulation ────────────────
     modulation_time = None
     if mod_detected and target_key:
-        # On cherche le premier moment où la target_key a un score élevé
         candidates = [t["Temps"] for t in timeline if t["Note"] == target_key and t["Conf"] >= 0.84]
-        
         if candidates:
             modulation_time = min(candidates)
         else:
-            # Sinon on prend le moment où target_key commence à être très présente
             target_times = [t["Temps"] for t in timeline if t["Note"] == target_key]
             if target_times:
-                # On prend environ le 30-40% du temps où target_key apparaît
                 sorted_times = sorted(target_times)
                 modulation_time = sorted_times[max(0, len(sorted_times) // 3)]
 
-    # Tempo & chroma global
     tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
     chroma_avg = np.mean(librosa.feature.chroma_cqt(y=y_filt, sr=sr, tuning=tuning), axis=1)
 
@@ -267,7 +241,6 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None):
         "name": file_name
     }
 
-    # Envoi Telegram (inchangé sauf caption améliorée)
     if TELEGRAM_TOKEN and CHAT_ID:
         try:
             df_tl = pd.DataFrame(timeline)
@@ -370,18 +343,24 @@ if uploaded_files:
                 st.markdown(f"<div class='file-header'> {data['name']}</div>", unsafe_allow_html=True)
                 
                 color = "linear-gradient(135deg, #065f46, #064e3b)" if data['conf'] > 85 else "linear-gradient(135deg, #1e293b, #0f172a)"
+
+                # ─── Correction : on crée la partie modulation séparément ───
+                mod_alert = ""
+                if data.get('modulation') and data.get('modulation_time_str'):
+                    mod_alert = f"""
+                        <div class="modulation-alert">
+                            MODULATION DÉTECTÉE → {data['target_key'].upper()} ({data['target_camelot']})<br>
+                            <span style="color:#fbbf24; font-size:1.1em;">≈ {data['modulation_time_str']}</span>
+                        </div>
+                    """.strip()
+
                 st.markdown(f"""
                     <div class="report-card" style="background:{color};">
                         <h1 style="font-size:5.4em; margin:8px 0; font-weight:900;">{data['key'].upper()}</h1>
                         <p style="font-size:1.5em; opacity:0.92;">
                             CAMELOT <b>{data['camelot']}</b>  •  Confiance <b>{data['conf']}%</b>
                         </p>
-                        {f'''
-                        <div class="modulation-alert">
-                            MODULATION DÉTECTÉE → {data['target_key'].upper()} ({data['target_camelot']})<br>
-                            <span style="color:#fbbf24; font-size:1.1em;">≈ {data['modulation_time_str']}</span>
-                        </div>
-                        ''' if data['modulation'] else ""}
+                        {mod_alert}
                     </div>
                     """, unsafe_allow_html=True)
                 
