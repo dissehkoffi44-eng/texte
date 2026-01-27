@@ -99,23 +99,52 @@ def get_bass_priority(y, sr):
 def solve_key_sniper(chroma_vector, bass_vector):
     best_overall_score = -1
     best_key = "Unknown"
+    
+    # Normalisation des vecteurs
     cv = (chroma_vector - chroma_vector.min()) / (chroma_vector.max() - chroma_vector.min() + 1e-6)
     bv = (bass_vector - bass_vector.min()) / (bass_vector.max() - bass_vector.min() + 1e-6)
+    
     for p_name, p_data in PROFILES.items():
         for mode in ["major", "minor"]:
             for i in range(12):
+                # 1. Calcul de base (Corrélation Krumhansl/Temperley/Bellman)
                 score = np.corrcoef(cv, np.roll(p_data[mode], i))[0, 1]
+                
+                # --- LOGIQUE DE DÉTECTION RELATIVE AMÉLIORÉE ---
+                
                 if mode == "minor":
-                    dom_idx, leading_tone = (i + 7) % 12, (i + 11) % 12
-                    if cv[dom_idx] > 0.45 and cv[leading_tone] > 0.35: score *= 1.2 
-                if bv[i] > 0.6: score += (bv[i] * 0.2)
-                fifth_idx = (i + 7) % 12
-                if cv[fifth_idx] > 0.5: score += 0.1
+                    # Pour une tonique mineure à l'index i :
+                    dom_idx = (i + 7) % 12       # Dominante (ex: Mi pour La min)
+                    leading_tone = (i + 11) % 12  # Sensible (ex: Sol# pour La min)
+                    
+                    # SI on détecte la sensible ou une forte dominante mineure
+                    # On booste le score mineur pour le différencier de son relatif majeur
+                    if cv[leading_tone] > 0.30:
+                        score *= 1.35  # Boost majeur : la sensible est la preuve ultime du mineur
+                    if cv[dom_idx] > 0.45:
+                        score *= 1.15  # Boost de confirmation
+                
+                else:  # mode == "major"
+                    # Pour une tonique majeure à l'index i :
+                    dom_idx = (i + 7) % 12
+                    # Si la quinte et la tonique sont très fortes sans sensible mineure
+                    if cv[i] > 0.7 and cv[dom_idx] > 0.6:
+                        score *= 1.1
+                
+                # 2. Poids des Basses (Fondamentales)
+                if bv[i] > 0.6:
+                    score += (bv[i] * 0.25)
+                
+                # 3. Validation des intervalles critiques (Tierces)
                 third_idx = (i + 4) % 12 if mode == "major" else (i + 3) % 12
-                if cv[third_idx] > 0.5: score += 0.1
+                if cv[third_idx] > 0.5:
+                    score += 0.15
+                
+                # Enregistrement du meilleur candidat
                 if score > best_overall_score:
                     best_overall_score = score
                     best_key = f"{NOTES_LIST[i]} {mode}"
+    
     return {"key": best_key, "score": best_overall_score}
 
 def process_audio_precision(file_bytes, file_name, _progress_callback=None):
