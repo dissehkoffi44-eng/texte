@@ -56,6 +56,26 @@ PROFILES = {
 }
 
 # --- STYLES CSS ---
+# Juste avant st.markdown(...)
+mod_alert = ""
+if data['modulation'] and data.get('modulation_time_str'):
+    mod_alert = f"""
+        <div class="modulation-alert">
+            MODULATION DÉTECTÉE → {data['target_key'].upper()} ({data['target_camelot']})<br>
+            <span style="color:#fbbf24; font-size:1.1em;">≈ {data['modulation_time_str']}</span>
+        </div>
+    """.strip()
+
+# Puis dans le st.markdown :
+st.markdown(f"""
+    <div class="report-card" style="background:{color};">
+        <h1 style="font-size:5.4em; margin:8px 0; font-weight:900;">{data['key'].upper()}</h1>
+        <p style="font-size:1.5em; opacity:0.92;">
+            CAMELOT <b>{data['camelot']}</b>  •  Confiance <b>{data['conf']}%</b>
+        </p>
+        {mod_alert}
+    </div>
+""", unsafe_allow_html=True)
 st.markdown("""
     <style>
     .main { background-color: #0b0e14; }
