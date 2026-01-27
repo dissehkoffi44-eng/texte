@@ -166,7 +166,7 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None):
         b_seg = get_bass_priority(y[idx_start:idx_end], sr)
         res = solve_key_sniper(c_avg, b_seg)
         
-        if res['score'] < 0.84: continue  # Plus strict
+        if res['score'] < 0.88: continue  # Plus strict
         
         # --- AMÉLIORATION : PONDÉRATION TEMPORELLE AGRESSIVE + ÉNERGIE ---
         if start < 12:
