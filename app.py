@@ -434,10 +434,12 @@ def seconds_to_mmss(seconds):
     return f"{mins:02d}:{secs:02d}"
 
 def test_chord_consonance(chroma_norm, chord_notes_list):
-    """Teste la consonance d'un accord en sommant les valeurs chroma normalisées de ses notes."""
+    """Teste la consonance d'un accord avec pondération pour plus de précision."""
     try:
         indices = [NOTES_LIST.index(note) for note in chord_notes_list]
-        consonance_score = np.sum([chroma_norm[idx] for idx in indices]) / len(indices)  # Moyenne pour normalisation
+        weights = [1.2, 0.8, 1.0]  # Pondération : root > fifth > third
+        weighted_sum = sum(chroma_norm[idx] * w for idx, w in zip(indices, weights))
+        consonance_score = weighted_sum / sum(weights)
         return consonance_score
     except ValueError:
         return 0
@@ -659,7 +661,7 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None, retr
         best_chord_name = "None"
         best_chord_score = 0
 
-    # --- AJOUT : Meilleur accord global (tous les triads possibles, excluant root de main/target si applicable) ---
+    # --- AJOUT : Meilleur accord global (tous les triads possibles, sans exclusion) ---
     all_chords = []
     for root in NOTES_LIST:
         # Major
@@ -689,33 +691,10 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None, retr
         score = test_chord_consonance(chroma_norm, chord['notes_list'])
         overall_consonance_scores[chord['name']] = score
 
-    # Identifier les chords à exclure (root de main et target)
-    exclude_chords = set()
-    try:
-        note, mode = final_key.split()
-        root_chord = f"{note}maj" if 'major' in mode or mode in ['ionian', 'mixolydian', 'lydian'] else f"{note}min"
-        exclude_chords.add(root_chord)
-    except ValueError:
-        pass
-    if target_key:
-        try:
-            t_note, t_mode = target_key.split()
-            target_root_chord = f"{t_note}maj" if 'major' in t_mode or t_mode in ['ionian', 'mixolydian', 'lydian'] else f"{t_note}min"
-            exclude_chords.add(target_root_chord)
-        except ValueError:
-            pass
-
-    # Trier et trouver le meilleur non exclu
-    sorted_chords = sorted(overall_consonance_scores.items(), key=lambda x: x[1], reverse=True)
-    best_global_chord = None
-    best_global_score = 0
-    for ch, sc in sorted_chords:
-        if ch not in exclude_chords:
-            best_global_chord = ch
-            best_global_score = sc * 100
-            break
-
-    if not best_global_chord:
+    if overall_consonance_scores:
+        best_global_chord = max(overall_consonance_scores, key=overall_consonance_scores.get)
+        best_global_score = overall_consonance_scores[best_global_chord] * 100
+    else:
         best_global_chord = "None"
         best_global_score = 0
 
@@ -765,7 +744,7 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None, retr
         "key_alternatives": [k for k in candidates if k != final_key],
         "best_chord": best_chord_name,  # Best diatonic
         "best_chord_consonance": int(best_chord_score),
-        "best_global_chord": best_global_chord,  # Best global excluant roots
+        "best_global_chord": best_global_chord,  # Best global sans exclusion
         "best_global_consonance": int(best_global_score),
         "best_verified_key": best_verified_key
     }
