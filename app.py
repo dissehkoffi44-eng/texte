@@ -523,7 +523,7 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None, retr
     low_freq = 60 if retry else 80  # Lower low freq cutoff
     high_freq = 8000 if retry else 5000  # Higher high freq
     atonal_thresh = 0.5 if retry else 0.7  # Lower atonal threshold
-    continue_thresh = 0.75 if retry else 0.9  # Lower continue threshold
+    continue_thresh = 0.77 if retry else 0.85  # Lower continue threshold
     bass_bonus = 0.30 if retry else 0.20  # Higher bass bonus
     bass_low_cutoff = 120 if retry else 150  # Adjust bass cutoff
 
