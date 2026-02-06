@@ -14,11 +14,8 @@ import streamlit.components.v1 as components
 from scipy.signal import butter, lfilter
 from datetime import datetime
 from pydub import AudioSegment
-from scipy.cluster.hierarchy import fcluster, linkage
-from scipy.spatial.distance import pdist
 import logging
 import textwrap
-import concurrent.futures  # AJOUT : Pour parallélisation des segments
 
 # --- FORCE FFMPEG PATH (WINDOWS FIX) ---
 if os.path.exists(r'C:\ffmpeg\bin'):
@@ -153,63 +150,29 @@ def get_mixing_advice(data):
     """
     Génère les conseils de mix suivant EXACTEMENT la checklist fournie
     """
-    if not data.get('modulation', False):
-        return None
-
+    # ADAPTÉ : Sans modulation, conseils simplifiés sur la clé principale
     principal_camelot = data.get('camelot', '??')
-    target_key       = data.get('target_key', 'Inconnu')
-    target_camelot   = data.get('target_camelot', '??')
-    perc             = data.get('mod_target_percentage', 0)
-    ends_in_target   = data.get('mod_ends_in_target', False)
-    time_str         = data.get('modulation_time_str', '??:??')
 
     lines = []
 
     lines.append("**Checklist mix harmonique – ce que tu dois faire :**")
 
-    if ends_in_target:
-        lines.append(f"✅ **Oui : le morceau termine dans {target_key.upper()} ({target_camelot})**")
-        lines.append("   → **Privilégie cette tonalité pour le track suivant**")
-        priority = "target"
-    else:
-        lines.append(f"⚠️ **Non : ne termine pas en {target_key.upper()} ({target_camelot})**")
-        lines.append("   → La tonalité de sortie reste plutôt " + principal_camelot)
-        priority = "principal"
+    lines.append(f"✅ **Tonalité stable : {data['key'].upper()} ({principal_camelot})**")
+    lines.append("   → **Privilégie cette tonalité pour le track suivant**")
 
-    if perc > 45:
-        lines.append(f"✅ **Pourcentage très élevé ({perc:.1f}%)** → traite ce track presque comme s'il était en **{target_camelot}**")
-        priority = "target"
-    elif perc > 25:
-        lines.append(f"ℹ️ **Pourcentage significatif ({perc:.1f}%)** → la target est importante")
-        lines.append("   → Tu peux sortir après la bascule pour utiliser la target")
-    else:
-        lines.append(f"🔸 **Pourcentage faible ({perc:.1f}%)** → modulation plutôt ponctuelle")
-        lines.append("   → Tu peux rester sur la tonalité principale pour plus de sécurité")
-
-    lines.append(f"⚠️ **Moment de bascule ≈ {time_str}**")
-    lines.append("   → **Évite de faire un long mix pile à cet endroit** (chevauchement de tonalités = risque de clash harmonique)")
-
-    if ends_in_target or perc > 40:
-        lines.append("")
-        lines.append("**🚀 Pour une montée d’énergie volontaire :**")
-        lines.append(f"   → Sors sur la fin → enchaîne sur un track **+3** ou **+7** depuis **{target_camelot}**")
-        lines.append(f"     Ex : {target_camelot} → **{get_neighbor_camelot(target_camelot, 3)}** ou **{get_neighbor_camelot(target_camelot, 7)}**")
-        lines.append("     → C’est une vraie « modulation DJ » qui donne du punch !")
+    lines.append("")
+    lines.append("**🚀 Pour une montée d’énergie volontaire :**")
+    lines.append(f"   → Enchaîne sur un track **+3** ou **+7** depuis **{principal_camelot}**")
+    lines.append(f"     Ex : {principal_camelot} → **{get_neighbor_camelot(principal_camelot, 3)}** ou **{get_neighbor_camelot(principal_camelot, 7)}**")
 
     lines.append("")
     lines.append("**Choix le plus safe pour le track suivant :**")
-    if priority == "target":
-        lines.append(f"→ **{target_camelot}** ou voisins (±1 sur la même roue A/B)")
-    else:
-        lines.append(f"→ **{principal_camelot}** ou voisins (±1)")
+    lines.append(f"→ **{principal_camelot}** ou voisins (±1 sur la même roue A/B)")
 
     lines.append("")
     lines.append("**Compatibilités safe (basé sur overlap notes >85%) :**")
     compat_principal = get_compatible_keys(data['best_verified_key'])
     lines.append(f"Pour principal ({data['best_verified_key']}) : {', '.join(compat_principal)}")
-    if data.get('modulation'):
-        compat_target = get_compatible_keys(data['target_key'])
-        lines.append(f"Pour target ({data['target_key']}) : {', '.join(compat_target)}")
     lines.append("→ Vérifie auditif pour éviter clashes sur intervalles clés (ex : b7 vs 7 maj).")
 
     return "\n".join(lines)
@@ -427,13 +390,6 @@ def solve_key_sniper(chroma_vector, bass_vector, atonal_threshold=0.7, bonus_wei
     
     return {"key": best_key, "score": best_overall_score}
 
-def seconds_to_mmss(seconds):
-    if seconds is None:
-        return "??:??"
-    mins = int(seconds // 60)
-    secs = int(seconds % 60)
-    return f"{mins:02d}:{secs:02d}"
-
 def test_chord_consonance(chroma_norm, chord_notes_list):
     """Teste la consonance d'un accord en sommant les valeurs chroma normalisées de ses notes."""
     try:
@@ -443,7 +399,6 @@ def test_chord_consonance(chroma_norm, chord_notes_list):
     except ValueError:
         return 0
 
-# AJOUT : Fonction pour consonance d'une note individuelle (sur toute la durée)
 def get_note_consonance(chroma_norm, note):
     """Calcule la consonance d'une note individuelle (sa force normalisée dans la chroma globale)."""
     try:
@@ -452,7 +407,6 @@ def get_note_consonance(chroma_norm, note):
     except ValueError:
         return 0
 
-# AJOUT : Score de consonance pour une tonalité (moyenne des consonances des notes diatoniques + meilleure note consonante)
 def get_key_consonance_score(key, chroma_norm):
     """Calcule un score de consonance pour une tonalité basée sur ses notes diatoniques et la meilleure note consonante."""
     diat_notes = list(get_diatonic_notes(key))
@@ -475,25 +429,6 @@ def infer_chord_key(chord_name):
         return CAMELOT_MAP.get(key_str, "??")
     except:
         return "??"
-
-# AJOUT : Fonction pour analyser un segment en parallèle
-def analyze_segment(start, y_filt_strict, y_filt_soft, sr, tuning, atonal_thresh, continue_thresh, bass_bonus, bass_low_cutoff):
-    idx_start, idx_end = int(start * sr), int((start + 6) * sr)  # Step fixe à 6s
-    seg_strict = y_filt_strict[idx_start:idx_end]
-    seg_soft = y_filt_soft[idx_start:idx_end]
-    if len(seg_strict) < 1000 or np.max(np.abs(seg_strict)) < 0.01:
-        return None
-    
-    c_raw_strict = librosa.feature.chroma_cqt(y=seg_strict, sr=sr, tuning=tuning, n_chroma=36, bins_per_octave=36)
-    c_raw_soft = librosa.feature.chroma_cqt(y=seg_soft, sr=sr, tuning=tuning, n_chroma=36, bins_per_octave=36)
-    c_avg = 0.7 * np.mean(c_raw_strict, axis=1) + 0.3 * np.mean(c_raw_soft, axis=1)
-    c_avg = np.sum(c_avg.reshape(12, 3), axis=1)
-    b_seg = get_bass_priority(y_filt_strict[idx_start:idx_end], sr, low_cutoff=bass_low_cutoff)
-    res = solve_key_sniper(c_avg, b_seg, atonal_threshold=atonal_thresh, bonus_weight=bass_bonus)
-    
-    if res['score'] < continue_thresh:
-        return None
-    return {"Temps": start, "Note": res['key'], "Conf": res['score']}
 
 def process_audio_precision(file_bytes, file_name, _progress_callback=None, retry=False):
     ext = file_name.split('.')[-1].lower()
@@ -523,14 +458,13 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None, retr
     low_freq = 60 if retry else 80  # Lower low freq cutoff
     high_freq = 8000 if retry else 5000  # Higher high freq
     atonal_thresh = 0.5 if retry else 0.7  # Lower atonal threshold
-    continue_thresh = 0.77 if retry else 0.85  # Lower continue threshold
     bass_bonus = 0.30 if retry else 0.20  # Higher bass bonus
     bass_low_cutoff = 120 if retry else 150  # Adjust bass cutoff
 
     y_filt_strict = apply_sniper_filters(y, sr, strict=True, margin=strict_margin, low_freq=low_freq, high_freq=high_freq)
     y_filt_soft = apply_sniper_filters(y, sr, strict=False)
 
-    # AJOUT : Analyse globale (chroma sur tout le morceau)
+    # Analyse globale (chroma sur tout le morceau) - Gardée comme base principale
     chroma_raw_global = librosa.feature.chroma_cqt(y=y_filt_strict, sr=sr, tuning=tuning, n_chroma=36, bins_per_octave=36)
     chroma_avg_global = np.mean(chroma_raw_global, axis=1)
     chroma_avg_global = np.sum(chroma_avg_global.reshape(12, 3), axis=1)  # Fold to 12
@@ -539,86 +473,22 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None, retr
     global_key = global_res['key']
     global_score = global_res['score']
 
-    # Analyse segmentée en parallèle
+    # RETIRÉ : Toute l'analyse segmentée (timeline, votes, mod_detected, target_key, etc.)
+    # Plus de timeline, donc on la set à vide
     timeline = []
-    votes = Counter()
-    segments = list(range(0, max(1, int(duration) - 6), 2))  # Step de 6s avec overlap de 4s
-    total_segments = len(segments)
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
-        futures = [executor.submit(analyze_segment, start, y_filt_strict, y_filt_soft, sr, tuning, atonal_thresh, continue_thresh, bass_bonus, bass_low_cutoff) for start in segments]
-        for idx, future in enumerate(concurrent.futures.as_completed(futures)):
-            if _progress_callback:
-                prog_internal = int((idx / total_segments) * 100)
-                _progress_callback(prog_internal, f"Scan : {segments[idx]}s / {int(duration)}s" + (" (retry mode)" if retry else ""))
-            result = future.result()
-            if result:
-                timeline.append(result)
-                weight = 1.5 if (result['Temps'] < 15 or result['Temps'] > (duration - 20)) else 1.0
-                votes[result['Note']] += int(result['Conf'] * 100 * weight)
-
-    if not votes:
-        default_res = {"key": "Atonal", "conf": 0, "tempo": 0, "tuning": 440, "modulation": False, "name": file_name, "diatonic_chords": [], "target_diatonic_chords": [], "validation_score": 0, "key_alternatives": [], "best_chord": "None", "best_chord_consonance": 0, "best_global_chord": "None", "best_global_consonance": 0, "camelot": "??", "target_camelot": None, "mod_target_percentage": 0, "mod_ends_in_target": False, "modulation_time_str": None, "chroma": [0]*12, "timeline": [], "best_verified_key": "Atonal"}
-        if not retry:
-            st.warning(f"Resultat faible pour {file_name} - Réanalyse automatique avec params relaxés...")
-            return process_audio_precision(file_bytes, file_name, _progress_callback, retry=True)
-        else:
-            return default_res
-
-    most_common = votes.most_common(3)  # Top 3 pour candidats
-
-    segment_key = most_common[0][0]
-    segment_conf = int(np.mean([t['Conf'] for t in timeline if t['Note'] == segment_key]) * 100)
-    
-    mod_detected = len(most_common) > 1 and (votes[most_common[1][0]] / max(1, sum(votes.values()))) > 0.25
-    target_key = most_common[1][0] if mod_detected else None
-
-    modulation_time = None
-    target_percentage = 0
-    ends_in_target = False
-
-    if mod_detected and target_key:
-        target_times = np.array([t["Temps"] for t in timeline if t["Note"] == target_key])
-        if len(target_times) > 3:
-            dist = pdist(target_times.reshape(-1,1), 'euclidean')
-            Z = linkage(target_times.reshape(-1,1), method='single')
-            clust = fcluster(Z, t=5, criterion='distance')  # Clusters si <5s apart
-            max_cluster_size = max(Counter(clust).values()) * 2  # Taille en secondes approx
-            if max_cluster_size < 10:  # Seuil minimal pour vraie modulation
-                mod_detected = False  # Ignore si pas continu
-        if mod_detected:
-            candidates = [t["Temps"] for t in timeline if t["Note"] == target_key and t["Conf"] >= 0.84]
-            if candidates:
-                modulation_time = min(candidates)
-            else:
-                sorted_times = sorted(target_times)
-                modulation_time = sorted_times[max(0, len(sorted_times) // 3)]
-
-            total_valid = len(timeline)
-            if total_valid > 0:
-                target_count = sum(1 for t in timeline if t["Note"] == target_key)
-                target_percentage = (target_count / total_valid) * 100
-
-            if timeline:
-                last_n = max(5, len(timeline) // 10)
-                last_segments = timeline[-last_n:]
-                last_counter = Counter(s["Note"] for s in last_segments)
-                last_key = last_counter.most_common(1)[0][0]
-                ends_in_target = (last_key == target_key)
 
     tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-    chroma_avg = chroma_avg_global  # Utilise la globale maintenant
+    chroma_avg = chroma_avg_global  # Utilise la globale
     chroma_norm = chroma_avg / np.max(chroma_avg + 1e-6)
 
     # --- AJOUT : Comparaison avec top 5 notes dominantes pour décision finale ---
     top_indices = np.argsort(chroma_norm)[-5:]  # Top 5 notes
     top_notes_weights = {NOTES_LIST[i]: chroma_norm[i] for i in top_indices if chroma_norm[i] > 0.1 * np.max(chroma_norm)}
 
-    # Candidats : Top 3 des votes + global key
-    candidates = [mc[0] for mc in most_common] + [global_key]
-    candidates = list(set(candidates))  # Uniques
+    # Candidats : Basé sur global + modes possibles
+    candidates = [global_key] + [f"{NOTES_LIST[(NOTES_LIST.index(global_key.split()[0]) + i) % 12]} {global_key.split()[1]}" for i in [-1, 1]]  # Voisins proches
 
-    # Score match : Proportion de top notes dans diatoniques (pondéré 0.3 sur conf)
+    # Score match : Proportion de top notes dans diatoniques
     matches = {}
     for key in candidates:
         diat_notes = get_diatonic_notes(key)
@@ -634,42 +504,32 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None, retr
             match_score = 0
         matches[key] = match_score
 
-    # AJOUT : Scores combinés (segmenté + global + consonance)
+    # ADAPTÉ : Scores combinés (global + consonance, sans segments)
     combined_scores = {}
     for key in candidates:
-        segment_score = votes[key] / sum(votes.values()) if sum(votes.values()) > 0 else 0
-        global_match = 1 if key == global_key else 0.5 * np.corrcoef(chroma_avg_global, np.roll(PROFILES["krumhansl"]["major" if "major" in key else "minor"], NOTES_LIST.index(key.split()[0])))[0,1]  # Approx global score pour candidat
+        global_match = global_score if key == global_key else 0.5 * np.corrcoef(chroma_avg_global, np.roll(PROFILES["krumhansl"]["major" if "major" in key else "minor"], NOTES_LIST.index(key.split()[0])))[0,1]  # Approx pour candidat
         consonance_score = get_key_consonance_score(key, chroma_norm)
-        combined = 0.4 * segment_score + 0.4 * global_match + 0.2 * consonance_score
+        combined = 0.6 * global_match + 0.4 * consonance_score  # Pondération ajustée sans segments
         combined_scores[key] = combined
 
-    # Choisir la meilleure tonalité principale (exacte)
+    # Choisir la meilleure tonalité principale
     final_key = max(combined_scores, key=combined_scores.get)
     final_conf = int(combined_scores[final_key] * 100)  # Normalisé en %
 
-    # Auto-correction si modulation faible
-    if mod_detected and target_percentage < 20:
-        mod_detected = False
-        target_key = None
-        final_key = global_key if combined_scores[global_key] > combined_scores[final_key] else final_key
+    # ADAPTÉ : Pas de modulation, donc set à False
+    mod_detected = False
+    target_key = None
 
-    # Additional verification for best key (stabilité)
+    # Additional verification for best key (stabilité simplifiée sur global)
     all_candidates = [final_key] + [k for k in candidates if k != final_key]
     stability_scores = {}
     for k in all_candidates:
-        segments_k = [t for t in timeline if t['Note'] == k]
-        if segments_k:
-            prop = len(segments_k) / len(timeline)
-            avg_conf = np.mean([t['Conf'] for t in segments_k])
-            stability = prop * avg_conf
-        else:
-            stability = 0
-        combined = 0.6 * stability + 0.4 * matches.get(k, 0)
+        combined = 0.6 * combined_scores.get(k, 0) + 0.4 * matches.get(k, 0)
         stability_scores[k] = combined
 
     best_verified_key = max(stability_scores, key=stability_scores.get)
 
-    # --- AJOUT : Test de consonance sur tous les accords possibles ---
+    # --- Test de consonance sur tous les accords possibles ---
     diatonic_chords = get_diatonic_chords(final_key)
     consonance_scores = {}
     for chord in diatonic_chords:
@@ -684,7 +544,7 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None, retr
         best_chord_name = "None"
         best_chord_score = 0
 
-    # --- AJOUT : Meilleur accord global (tous les triads possibles, excluant root de main/target si applicable) ---
+    # --- Meilleur accord global (tous les triads possibles, excluant root de main si applicable) ---
     all_chords = []
     for root in NOTES_LIST:
         # Major
@@ -714,7 +574,7 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None, retr
         score = test_chord_consonance(chroma_norm, chord['notes_list'])
         overall_consonance_scores[chord['name']] = score
 
-    # Identifier les chords à exclure (root de main et target)
+    # Identifier les chords à exclure (root de main)
     exclude_chords = set()
     try:
         note, mode = final_key.split()
@@ -722,13 +582,6 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None, retr
         exclude_chords.add(root_chord)
     except ValueError:
         pass
-    if target_key:
-        try:
-            t_note, t_mode = target_key.split()
-            target_root_chord = f"{t_note}maj" if 'major' in t_mode or t_mode in ['ionian', 'mixolydian', 'lydian'] else f"{t_note}min"
-            exclude_chords.add(target_root_chord)
-        except ValueError:
-            pass
 
     # Trier et trouver le meilleur non exclu
     sorted_chords = sorted(overall_consonance_scores.items(), key=lambda x: x[1], reverse=True)
@@ -746,7 +599,6 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None, retr
 
     # Génération accords pour affichage (sur final_key ajustée)
     diatonic_chords = get_diatonic_chords(final_key)
-    target_diatonic_chords = get_diatonic_chords(target_key) if target_key else []
 
     # Validation score pour affichage (coverage globale)
     validation_score = matches.get(final_key, 0) * 100
@@ -757,17 +609,17 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None, retr
         "conf": min(final_conf, 99),
         "tempo": int(float(tempo)),
         "tuning": round(440 * (2**(tuning/12)), 1),
-        "timeline": timeline,
+        "timeline": timeline,  # Vide maintenant
         "chroma": chroma_avg.tolist(),
-        "modulation": mod_detected,
-        "target_key": target_key,
-        "target_camelot": CAMELOT_MAP.get(target_key, "??") if target_key else None,
-        "modulation_time_str": seconds_to_mmss(modulation_time) if mod_detected else None,
-        "mod_target_percentage": round(target_percentage, 1) if mod_detected else 0,
-        "mod_ends_in_target": ends_in_target if mod_detected else False,
+        "modulation": mod_detected,  # False
+        "target_key": target_key,  # None
+        "target_camelot": None,
+        "modulation_time_str": None,
+        "mod_target_percentage": 0,
+        "mod_ends_in_target": False,
         "name": file_name,
         "diatonic_chords": diatonic_chords,
-        "target_diatonic_chords": target_diatonic_chords,
+        "target_diatonic_chords": [],
         "validation_score": int(validation_score),
         "key_alternatives": [k for k in candidates if k != final_key],
         "best_chord": best_chord_name,  # Best diatonic
@@ -788,25 +640,15 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None, retr
 
     if TELEGRAM_TOKEN and CHAT_ID:
         try:
-            df_tl = pd.DataFrame(timeline)
-            fig_tl = px.line(df_tl, x="Temps", y="Note", markers=True, template="plotly_dark", category_orders={"Note": NOTES_ORDER})
-            img_tl = fig_tl.to_image(format="png", width=1000, height=500)
-            
+            # ADAPTÉ : Pas de timeline, donc pas d'img_tl ; simplifie
             fig_rd = go.Figure(data=go.Scatterpolar(r=res_obj['chroma'], theta=NOTES_LIST, fill='toself', line_color='#10b981'))
             fig_rd.update_layout(template="plotly_dark", polar=dict(radialaxis=dict(visible=False)))
             img_rd = fig_rd.to_image(format="png", width=600, height=600)
-
-            mod_line = ""
-            if mod_detected:
-                perc = res_obj["mod_target_percentage"]
-                end_txt = " → **fin en " + target_key.upper() + " (" + res_obj['target_camelot'] + ")**" if res_obj['mod_ends_in_target'] else ""
-                mod_line = f"  *MODULATION →* `{target_key.upper()} ({res_obj['target_camelot']})` ≈ **{res_obj['modulation_time_str']}** ({perc}%){end_txt}"
 
             verified_camelot = CAMELOT_MAP.get(res_obj['best_verified_key'], "??")
             chord_camelot = infer_chord_key(res_obj['best_global_chord'])
 
             compat_principal = get_compatible_keys(res_obj['best_verified_key'])
-            compat_target = get_compatible_keys(target_key) if mod_detected else []
 
             caption = (f"  *RCDJ228 MUSIC SNIPER - RAPPORT*\n━━━━━━━━━━━━\n"
                        f"  *FICHIER:* `{file_name}`\n"
@@ -817,29 +659,18 @@ def process_audio_precision(file_bytes, file_name, _progress_callback=None, retr
                        f"  *MEILLEUR ACCORD:* `{res_obj['best_global_chord'].upper()} ({chord_camelot})` ({res_obj['best_global_consonance']}% consonance)\n"
                        f"  *TEMPO:* `{res_obj['tempo']} BPM`\n"
                        f"  *ACCORDAGE:* `{res_obj['tuning']} Hz`\n"
-                       f"{mod_line if mod_detected else '  *STABILITÉ TONALE:* OK'}\n━━━━━━━━━━━━"
-                       f"*Compat safe principal:* {', '.join(compat_principal[:3])}\n*Compat safe target:* {', '.join(compat_target[:3]) if mod_detected else 'N/A'}")
+                       f"  *STABILITÉ TONALE:* OK (analyse globale seulement)\n━━━━━━━━━━━━"
+                       f"*Compat safe principal:* {', '.join(compat_principal[:3])}")
 
             # ─── AJOUT : CONSEIL RAPIDE MIX EN VERSION ULTRA-RÉSUMÉE ───
             advice_text = get_mixing_advice(res_obj)
-            summary_advice = ""
-            if advice_text:
-                if "fin en target" in advice_text or "Oui : le morceau termine" in advice_text:
-                    summary_advice = f"→ Termine en {res_obj['target_camelot']} → privilégie cette tonalité pour le suivant !"
-                elif res_obj.get('mod_target_percentage', 0) > 45:
-                    summary_advice = f"→ {res_obj['target_camelot']} très présent → traite presque comme track en {res_obj['target_camelot']}"
-                else:
-                    summary_advice = "→ Modulation ponctuelle → reste sur tonalité principale"
-            
-            if summary_advice:
-                caption += f"\n\n*Conseil rapide mix :* {summary_advice}"
-            else:
-                caption += "\n\n*Pas de modulation détectée → mix safe sur la tonalité principale*"
+            summary_advice = "→ Pas de modulation détectée → mix safe sur la tonalité principale"
+            caption += f"\n\n*Conseil rapide mix :* {summary_advice}"
 
-            files = {'p1': ('timeline.png', img_tl, 'image/png'), 'p2': ('radar.png', img_rd, 'image/png')}
+            # ADAPTÉ : Seulement radar
+            files = {'p2': ('radar.png', img_rd, 'image/png')}
             media = [
-                {'type': 'photo', 'media': 'attach://p1', 'caption': caption, 'parse_mode': 'Markdown'},
-                {'type': 'photo', 'media': 'attach://p2'}
+                {'type': 'photo', 'media': 'attach://p2', 'caption': caption, 'parse_mode': 'Markdown'}
             ]
             requests.post(
                 f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMediaGroup",
@@ -925,36 +756,13 @@ if uploaded_files:
                 with key_col:
                     color = "linear-gradient(135deg, #065f46, #064e3b)" if data['conf'] > 85 else "linear-gradient(135deg, #1e293b, #0f172a)"
 
-                    mod_alert = ""
-                    if data.get('modulation'):
-                        perc = data.get('mod_target_percentage', 0)
-                        ends_in_target = data.get('mod_ends_in_target', False)
-                        time_str = data.get('modulation_time_str', '??:??')
-                        
-                        if perc < 25:
-                            nature = "passage court / ponctuel"
-                        elif perc < 50:
-                            nature = "section significative"
-                        else:
-                            nature = "dominante sur une grande partie"
-
-                        end_txt = " → **fin en " + data['target_key'].upper() + "**" if ends_in_target else ""
-                        
-                        mod_alert = f"""
-                            <div class="modulation-alert">
-                                MODULATION → {data['target_key'].upper()} ({data['target_camelot']})<br>
-                                <span class="detail">≈ {time_str} – {perc}% du morceau{end_txt}</span><br>
-                                <span class="nature">({nature})</span>
-                            </div>
-                        """.strip()
-
+                    # ADAPTÉ : Pas de mod_alert
                     st.markdown(f"""
                         <div class="report-card" style="background:{color};">
                             <h1 style="font-size:5.4em; margin:8px 0; font-weight:900;">{data['key'].upper()}</h1>
                             <p style="font-size:1.5em; opacity:0.92;">
                                 CAMELOT <b>{data['camelot']}</b>  •  Confiance <b>{data['conf']}%</b>
                             </p>
-                            {mod_alert}
                         </div>
                         """, unsafe_allow_html=True)
 
@@ -1021,19 +829,8 @@ if uploaded_files:
 
                 c1, c2 = st.columns([2, 1])
                 with c1: 
-                    df_timeline = pd.DataFrame(data['timeline'])
-                    if not df_timeline.empty:
-                        fig_tl = px.line(
-                            df_timeline, 
-                            x="Temps", y="Note", 
-                            markers=True, 
-                            template="plotly_dark", 
-                            category_orders={"Note": NOTES_ORDER}
-                        )
-                    else:
-                        fig_tl = go.Figure()
-                    fig_tl.update_layout(height=320, margin=dict(l=0,r=0,t=20,b=0))
-                    st.plotly_chart(fig_tl, use_container_width=True, key=f"tl_{i}_{hash(f.name)}")
+                    # ADAPTÉ : Pas de timeline, affiche un message
+                    st.info("Pas de timeline (analyse globale seulement)")
                 
                 with c2: 
                     fig_rd = go.Figure(data=go.Scatterpolar(
@@ -1087,15 +884,6 @@ if uploaded_files:
                         verified_camelot = CAMELOT_MAP.get(verified_key, "??")
                         st.subheader(f"Accords pour la tonalité vérifiée ({verified_key.upper()} - Camelot {verified_camelot})")
                         st.table(df_verified)
-
-                    # Pour la modulation
-                    target_chords = data.get("target_diatonic_chords", [])
-                    if target_chords:
-                        df_target = pd.DataFrame(target_chords)
-                        df_target = add_consonance_info(df_target, chroma_norm)
-                        target_camelot = data.get('target_camelot', '??')
-                        st.subheader(f"Accords pour la tonalité cible (modulation) ({data['target_key'].upper()} - Camelot {target_camelot})")
-                        st.table(df_target)
                     
                     # Affichage du meilleur accord
                     st.markdown(f"**Meilleur accord consonant :** {data.get('best_chord', 'None')} (Score: {data.get('best_chord_consonance', 0)}%)")
