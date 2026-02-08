@@ -35,119 +35,15 @@ NOTES_LIST = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 MODES = ['major', 'minor', 'mixolydian', 'dorian', 'phrygian', 'lydian', 'locrian', 'aeolian', 'ionian']  # Ajout des modes étendus
 NOTES_ORDER = [f"{n} {m}" for n in NOTES_LIST for m in MODES]
 
-# Mapping Camelot étendu pour tous les modes
 CAMELOT_MAP = {
-    "A aeolian": "8A (modal equiv)",
-    "A dorian": "9A (modal equiv)",
-    "A ionian": "11B (modal equiv)",
-    "A locrian": "6A (modal equiv)",
-    "A lydian": "12B (modal equiv)",
-    "A major": "11B",
-    "A minor": "8A",
-    "A mixolydian": "10B (modal equiv)",
-    "A phrygian": "7A (modal equiv)",
-    "A# aeolian": "3A (modal equiv)",
-    "A# dorian": "4A (modal equiv)",
-    "A# ionian": "6B (modal equiv)",
-    "A# locrian": "1A (modal equiv)",
-    "A# lydian": "7B (modal equiv)",
-    "A# major": "6B",
-    "A# minor": "3A",
-    "A# mixolydian": "5B (modal equiv)",
-    "A# phrygian": "2A (modal equiv)",
-    "B aeolian": "10A (modal equiv)",
-    "B dorian": "11A (modal equiv)",
-    "B ionian": "1B (modal equiv)",
-    "B locrian": "8A (modal equiv)",
-    "B lydian": "2B (modal equiv)",
-    "B major": "1B",
-    "B minor": "10A",
-    "B mixolydian": "12B (modal equiv)",
-    "B phrygian": "9A (modal equiv)",
-    "C aeolian": "5A (modal equiv)",
-    "C dorian": "6A (modal equiv)",
-    "C ionian": "8B (modal equiv)",
-    "C locrian": "3A (modal equiv)",
-    "C lydian": "9B (modal equiv)",
-    "C major": "8B",
-    "C minor": "5A",
-    "C mixolydian": "7B (modal equiv)",
-    "C phrygian": "4A (modal equiv)",
-    "C# aeolian": "12A (modal equiv)",
-    "C# dorian": "1A (modal equiv)",
-    "C# ionian": "3B (modal equiv)",
-    "C# locrian": "10A (modal equiv)",
-    "C# lydian": "4B (modal equiv)",
-    "C# major": "3B",
-    "C# minor": "12A",
-    "C# mixolydian": "2B (modal equiv)",
-    "C# phrygian": "11A (modal equiv)",
-    "D aeolian": "7A (modal equiv)",
-    "D dorian": "8A (modal equiv)",
-    "D ionian": "10B (modal equiv)",
-    "D locrian": "5A (modal equiv)",
-    "D lydian": "11B (modal equiv)",
-    "D major": "10B",
-    "D minor": "7A",
-    "D mixolydian": "9B (modal equiv)",
-    "D phrygian": "6A (modal equiv)",
-    "D# aeolian": "2A (modal equiv)",
-    "D# dorian": "3A (modal equiv)",
-    "D# ionian": "5B (modal equiv)",
-    "D# locrian": "12A (modal equiv)",
-    "D# lydian": "6B (modal equiv)",
-    "D# major": "5B",
-    "D# minor": "2A",
-    "D# mixolydian": "4B (modal equiv)",
-    "D# phrygian": "1A (modal equiv)",
-    "E aeolian": "9A (modal equiv)",
-    "E dorian": "10A (modal equiv)",
-    "E ionian": "12B (modal equiv)",
-    "E locrian": "7A (modal equiv)",
-    "E lydian": "1B (modal equiv)",
-    "E major": "12B",
-    "E minor": "9A",
-    "E mixolydian": "11B (modal equiv)",
-    "E phrygian": "8A (modal equiv)",
-    "F aeolian": "4A (modal equiv)",
-    "F dorian": "5A (modal equiv)",
-    "F ionian": "7B (modal equiv)",
-    "F locrian": "2A (modal equiv)",
-    "F lydian": "8B (modal equiv)",
-    "F major": "7B",
-    "F minor": "4A",
-    "F mixolydian": "6B (modal equiv)",
-    "F phrygian": "3A (modal equiv)",
-    "F# aeolian": "11A (modal equiv)",
-    "F# dorian": "12A (modal equiv)",
-    "F# ionian": "2B (modal equiv)",
-    "F# locrian": "9A (modal equiv)",
-    "F# lydian": "3B (modal equiv)",
-    "F# major": "2B",
-    "F# minor": "11A",
-    "F# mixolydian": "1B (modal equiv)",
-    "F# phrygian": "10A (modal equiv)",
-    "G aeolian": "6A (modal equiv)",
-    "G dorian": "7A (modal equiv)",
-    "G ionian": "9B (modal equiv)",
-    "G locrian": "4A (modal equiv)",
-    "G lydian": "10B (modal equiv)",
-    "G major": "9B",
-    "G minor": "6A",
-    "G mixolydian": "8B (modal equiv)",
-    "G phrygian": "5A (modal equiv)",
-    "G# aeolian": "1A (modal equiv)",
-    "G# dorian": "2A (modal equiv)",
-    "G# ionian": "4B (modal equiv)",
-    "G# locrian": "11A (modal equiv)",
-    "G# lydian": "5B (modal equiv)",
-    "G# major": "4B",
-    "G# minor": "1A",
-    "G# mixolydian": "3B (modal equiv)",
-    "G# phrygian": "12A (modal equiv)"
+    'C major': '8B', 'C# major': '3B', 'D major': '10B', 'D# major': '5B', 'E major': '12B', 'F major': '7B',
+    'F# major': '2B', 'G major': '9B', 'G# major': '4B', 'A major': '11B', 'A# major': '6B', 'B major': '1B',
+    'C minor': '5A', 'C# minor': '12A', 'D minor': '7A', 'D# minor': '2A', 'E minor': '9A', 'F minor': '4A',
+    'F# minor': '11A', 'G minor': '6A', 'G# minor': '1A', 'A minor': '8A', 'A# minor': '3A', 'B minor': '10A'
+    # Note: Pour modes étendus, mapper approximativement (e.g., mixolydian comme major)
 }
 
-# Offsets pour calculer la root de la major parente (gardé pour compatibilité, mais mapping est maintenant exhaustif)
+# Offsets pour calculer la root de la major parente
 MODE_PARENT_OFFSETS = {
     'major': 0,
     'ionian': 0,
@@ -159,6 +55,35 @@ MODE_PARENT_OFFSETS = {
     'phrygian': -4,
     'locrian': -11  # 7e degré
 }
+
+# Mise à jour du mapping pour tous les modes (standards et étendus)
+for note in NOTES_LIST:
+    for mode in MODES:
+        # Pour major/minor/ionian/aeolian, utiliser le mapping direct
+        if mode in ['ionian', 'aeolian']:
+            base_mode = 'major' if mode == 'ionian' else 'minor'
+            CAMELOT_MAP[f"{note} {mode}"] = CAMELOT_MAP.get(f"{note} {base_mode}", "??")
+        elif mode in ['major', 'minor']:
+            continue  # Déjà mappés
+
+        # Pour modes étendus, calculer la root de la major parente
+        root_idx = NOTES_LIST.index(note)
+        offset = MODE_PARENT_OFFSETS.get(mode, 0)
+        parent_root_idx = (root_idx + offset) % 12
+        parent_root = NOTES_LIST[parent_root_idx]
+
+        # Détermine si major-like ou minor-like pour choisir B ou A
+        if mode in ['major', 'ionian', 'mixolydian', 'lydian']:
+            parent_mode = 'major'  # Camelot B
+        else:  # minor, aeolian, dorian, phrygian, locrian
+            parent_mode = 'minor'  # Camelot A (relative minor de la major parente)
+            # Relative minor = -3 demi-tons de la major parente
+            relative_minor_idx = (parent_root_idx - 3) % 12
+            parent_root = NOTES_LIST[relative_minor_idx]
+
+        camelot_key = f"{parent_root} {parent_mode}"
+        camelot = CAMELOT_MAP.get(camelot_key, "??")
+        CAMELOT_MAP[f"{note} {mode}"] = camelot + " (modal equiv)" if camelot != "??" else "??"
 
 PROFILES = {
     "krumhansl": {
@@ -203,10 +128,8 @@ def get_neighbor_camelot(camelot_str: str, offset: int) -> str:
     if camelot_str in ['??', None, '']:
         return '??'
     try:
-        # Extraire le numéro et la lettre, en ignorant "(modal equiv)" si présent
-        camelot_base = camelot_str.split(" (")[0]
-        num = int(camelot_base[:-1])
-        wheel = camelot_base[-1]  # A ou B
+        num = int(camelot_str[:-1])
+        wheel = camelot_str[-1]  # A ou B
         new_num = ((num - 1 + offset) % 12) + 1
         return f"{new_num}{wheel}"
     except:
@@ -1159,20 +1082,3 @@ with st.sidebar:
     if st.button("🔄 Vider le cache & relancer"):
         st.cache_data.clear()
         st.rerun()
-
-    # Ajout de la visualisation de la roue Camelot dans la sidebar
-    with st.expander("🔄 Roue Camelot Spéciale (A/B + Modal)"):
-        fig_camelot = go.Figure(go.Scatterpolar(
-            r=[1] * 12,  # Rayons fixes
-            theta=[(i+1)*30 for i in range(12)],  # Positions angulaires
-            mode='markers+text',
-            text=[f"{i+1}{letter}" for i in range(12) for letter in ['A', 'B']],  # Labels simplifiés
-            marker=dict(size=20, color='lightblue')
-        ))
-        fig_camelot.update_layout(
-            polar=dict(radialaxis_visible=False),
-            showlegend=False,
-            title="Roue Camelot Étendue"
-        )
-        st.plotly_chart(fig_camelot, use_container_width=True)
-```​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​​
