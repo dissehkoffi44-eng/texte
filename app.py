@@ -29,6 +29,7 @@ CHAT_ID = st.secrets.get("CHAT_ID")
 
 # --- RÉFÉRENTIELS HARMONIQUES ---
 NOTES_LIST = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+MODAL_MODES = ['major', 'minor', 'dorian', 'phrygian', 'lydian', 'mixolydian', 'locrian']
 NOTES_ORDER = [f"{n} {m}" for n in NOTES_LIST for m in ['major', 'minor']]
 
 CAMELOT_MAP = {
@@ -62,6 +63,35 @@ PROFILES_ROLLED = {
         for mode in ["major", "minor"]
     }
     for p_name in PROFILES
+}
+
+# --- RÉFÉRENTIEL MODAL ÉTENDU (Modes Grecs) ---
+# Chaque mode est défini par ses demi-tons caractéristiques (profil de Krumhansl adapté).
+MODES_PROFILES = {
+    "ionian":     [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88],  # = Major
+    "aeolian":    [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17],  # = Minor naturel
+    "dorian":     [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.74, 4.75, 3.98, 4.02, 3.34, 3.17],  # VI majeur
+    "phrygian":   [6.33, 5.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17],  # II♭ caractéristique
+    "lydian":     [6.35, 2.23, 3.48, 2.33, 5.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88],  # IV# caractéristique
+    "mixolydian": [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 5.29, 2.88],  # VII♭ caractéristique
+    "locrian":    [6.33, 5.68, 3.52, 5.38, 2.60, 3.53, 1.54, 1.75, 3.98, 2.69, 3.34, 3.17],  # V♭ + II♭ instables
+}
+
+# Précomputation des 7 × 12 profils modaux roulés
+MODAL_PROFILES_ROLLED = {
+    m_name: [np.roll(MODES_PROFILES[m_name], i) for i in range(12)]
+    for m_name in MODES_PROFILES
+}
+
+# Mapping mode → famille Camelot (A = mineur, B = majeur)
+MODAL_CAMELOT_FAMILY = {
+    "ionian":     "major",
+    "aeolian":    "minor",
+    "dorian":     "minor",
+    "phrygian":   "minor",
+    "lydian":     "major",
+    "mixolydian": "major",
+    "locrian":    "minor",
 }
 
 # --- STYLES CSS ---
@@ -324,6 +354,93 @@ def solve_key_sniper(chroma_vector, bass_vector):
 
     return {"key": best_key, "score": best_overall_score}
 
+
+def solve_key_sniper_modal(chroma_vector, bass_vector):
+    """
+    Moteur de détection modale étendu — 7 Modes Grecs × 12 Toniques.
+
+    Détecte non seulement Major/Minor classiques mais aussi Dorian, Phrygien,
+    Lydien, Mixolydien et Locrien avec pondération professionnelle :
+      - Corrélation de Pearson sur le profil modal complet
+      - Boost basse (poids +0.25 si tonique dominante dans les graves)
+      - Bonus Quinte (stabilité harmonique +0.10)
+
+    Retourne : dict avec 'key' (ex. "A dorian") et 'score'.
+    """
+    best_overall_score = -1
+    best_res = {"key": "Unknown", "mode": "major", "score": 0}
+
+    cv = (chroma_vector - chroma_vector.min()) / (chroma_vector.max() - chroma_vector.min() + 1e-6)
+    bv = (bass_vector - bass_vector.min()) / (bass_vector.max() - bass_vector.min() + 1e-6)
+
+    for m_name, profiles in MODAL_PROFILES_ROLLED.items():
+        for i in range(12):
+            rolled = profiles[i]
+            # Corrélation de Pearson entre spectre audio et profil théorique du mode
+            score = np.corrcoef(cv, rolled)[0, 1]
+
+            # --- POIDS PROFESSIONNELS ---
+            # 1. Priorité à la Basse (si la basse joue la tonique → boost massif)
+            if bv[i] > 0.7:
+                score += 0.25
+
+            # 2. Détection de la Quinte (stabilité harmonique)
+            fifth_idx = (i + 7) % 12
+            if cv[fifth_idx] > 0.6:
+                score += 0.10
+
+            if score > best_overall_score:
+                best_overall_score = score
+                # Mapping vers nom lisible (ionian→major, aeolian→minor, sinon nom grec)
+                if m_name == "ionian":
+                    mode_label = "major"
+                elif m_name == "aeolian":
+                    mode_label = "minor"
+                else:
+                    mode_label = m_name
+                best_res = {
+                    "key": f"{NOTES_LIST[i]} {mode_label}",
+                    "raw_mode": m_name,
+                    "score": best_overall_score
+                }
+
+    return best_res
+
+
+def get_camelot_modal(key_str):
+    """
+    Projection modale vers la roue de Camelot standard (1A–12B).
+
+    Les modes grecs n'existent pas nativement dans le système Camelot.
+    On projette chaque mode vers sa famille A (mineur) ou B (majeur) pour
+    garantir la compatibilité avec le mix DJ professionnel.
+
+    Exemples :
+      "A dorian"     → projeté en "A minor"  → 8A
+      "D lydian"     → projeté en "D major"  → 10B
+      "G mixolydian" → projeté en "G major"  → 9B
+    """
+    parts = key_str.strip().split()
+    if len(parts) < 2:
+        return "??"
+    note = parts[0]
+    mode = " ".join(parts[1:])  # gère les modes composés éventuels
+
+    # Mapping : mode grec → famille Camelot simplifiée
+    modal_map = {
+        "major":      "major",
+        "minor":      "minor",
+        "ionian":     "major",
+        "aeolian":    "minor",
+        "lydian":     "major",
+        "mixolydian": "major",
+        "dorian":     "minor",
+        "phrygian":   "minor",
+        "locrian":    "minor",
+    }
+    simplified_mode = modal_map.get(mode, "major")
+    return CAMELOT_MAP.get(f"{note} {simplified_mode}", "??")
+
 def get_key_score(key, chroma_vector, bass_vector):
     """
     FIX PERFORMANCE : utilise PROFILES_ROLLED précomputé.
@@ -417,10 +534,12 @@ def process_audio(audio_file, file_name, progress_placeholder):
             b_seg = get_bass_priority(y_harm[idx_start:idx_end], sr)
 
             res = solve_key_sniper(c_avg, b_seg)
+            res_modal = solve_key_sniper_modal(c_avg, b_seg)
 
             weight = 3.0 if start > (duration_harm - 15) else 2.0 if start < 10 else 1.0
             votes[res['key']] += int(res['score'] * 100 * weight)
-            timeline.append({"Temps": harm_start + start, "Note": res['key'], "Conf": res['score']})
+            timeline.append({"Temps": harm_start + start, "Note": res['key'], "Conf": res['score'],
+                              "Mode": res_modal.get('key', res['key'])})
 
             p_val = 50 + int((i / len(segments)) * 40)
             update_prog(p_val, "Calcul chirurgical en cours")
@@ -432,6 +551,12 @@ def process_audio(audio_file, file_name, progress_placeholder):
         res_global = solve_key_sniper(chroma_avg, bass_global)
         final_key = res_global['key']
         final_conf = int(res_global['score'] * 100)
+
+        # --- ANALYSE MODALE GLOBALE ---
+        res_modal_global = solve_key_sniper_modal(chroma_avg, bass_global)
+        modal_key = res_modal_global.get('key', final_key)
+        modal_camelot = get_camelot_modal(modal_key)
+        modal_raw_mode = res_modal_global.get('raw_mode', 'ionian')
 
         cadence_score = detect_cadence_resolution(timeline, final_key)
         if cadence_score < 2 and len(most_common) > 1:
@@ -630,6 +755,10 @@ def process_audio(audio_file, file_name, progress_placeholder):
             "pure_camelot": CAMELOT_MAP.get(confiance_pure_key, "??"),
             "avis_expert": avis_expert,
             "color_bandeau": color_bandeau,
+            # --- DONNÉES MODALES ---
+            "modal_key": modal_key,
+            "modal_camelot": modal_camelot,
+            "modal_raw_mode": modal_raw_mode,
         }
 
         # --- RAPPORT TELEGRAM ENRICHI (RADAR + TIMELINE) ---
@@ -653,6 +782,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
                     f" | *CONFIANCE:* `{res_obj['dominant_conf']}%`"
                 )
                 pure_line = f"\n🔒 *TONALITÉ PURE:* `{res_obj['confiance_pure'].upper()} ({res_obj['pure_camelot']})` | *AVIS:* `{res_obj['avis_expert']}`"
+                modal_line = f"\n🎼 *MODE GREC:* `{res_obj.get('modal_key','—').upper()} ({res_obj.get('modal_camelot','??')})` | *MODE:* `{res_obj.get('modal_raw_mode','—').upper()}`"
 
                 caption = (
                     f"🎯 *RCDJ228 MUSIC SNIPER*\n"
@@ -663,6 +793,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
                     f" | *CONFIANCE:* `{res_obj['conf']}%`"
                     + dom_line
                     + pure_line
+                    + modal_line
                     + f"{mod_line}\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
                     f"🎸 *ACCORDAGE:* `{res_obj['tuning']} Hz` ✅\n"
@@ -742,7 +873,7 @@ def get_chord_js(btn_id, key_str):
 
 # --- DASHBOARD PRINCIPAL ---
 st.title("🎯 RCDJ228 MUSIC SNIPER")
-st.markdown("#### Système d'Analyse Harmonique 99% précis")
+st.markdown("#### Système d'Analyse Harmonique Modale — 7 Modes Grecs × 12 Toniques")
 
 global_status = st.empty()
 
@@ -795,7 +926,7 @@ if uploaded_files:
                 st.markdown(f"""
                     <div class="report-card" style="background:{analysis_data['color_bandeau']};">
                         <p style="letter-spacing:5px; opacity:0.8; font-size:0.7em; margin-bottom:0px;">
-                            SNIPER ENGINE v5.1 | {analysis_data['avis_expert']}
+                            SNIPER ENGINE v6.0 — MODAL | {analysis_data['avis_expert']}
                         </p>
                         <h1 style="font-size:5em; margin:0px 0; font-weight:900; line-height:1; text-align: center;">
                             {analysis_data['pure_camelot']}
@@ -820,6 +951,34 @@ if uploaded_files:
                         <button id="{btn_id}" style="width:100%; height:95px; background:linear-gradient(45deg, #4F46E5, #7C3AED); color:white; border:none; border-radius:15px; cursor:pointer; font-weight:bold;">🎹 TESTER L'ACCORD</button>
                         <script>{get_chord_js(btn_id, analysis_data['key'])}</script>
                     """, height=110)
+
+                # --- MODE GREC DÉTECTÉ ---
+                raw_mode = analysis_data.get('modal_raw_mode', 'ionian')
+                modal_colors = {
+                    "ionian": "#10b981", "aeolian": "#3b82f6",
+                    "dorian": "#8b5cf6", "phrygian": "#ef4444",
+                    "lydian": "#f59e0b", "mixolydian": "#06b6d4", "locrian": "#6b7280"
+                }
+                modal_descriptions = {
+                    "ionian":     "Majeur classique — lumineux, stable",
+                    "aeolian":    "Mineur naturel — mélancolique, profond",
+                    "dorian":     "Mineur jazz — funky, sophistiqué",
+                    "phrygian":   "Flamenco / Metal — sombre, exotique",
+                    "lydian":     "Cinématique — rêveur, flottant",
+                    "mixolydian": "Blues / Rock — énergique, dominant",
+                    "locrian":    "Dissonant — instable, avant-gardiste",
+                }
+                mc = modal_colors.get(raw_mode, "#6b7280")
+                md = modal_descriptions.get(raw_mode, "")
+                st.markdown(
+                    f"<div class='metric-box' style='border-color:{mc}; margin-bottom:12px;'>"
+                    f"<b>🎼 MODE DÉTECTÉ</b><br>"
+                    f"<span style='font-size:1.8em; color:{mc}; font-weight:900;'>{analysis_data.get('modal_key','—').upper()}</span>"
+                    f"&nbsp;&nbsp;<span style='font-size:1em; color:#94a3b8;'>Camelot : <b>{analysis_data.get('modal_camelot','??')}</b></span><br>"
+                    f"<span style='font-size:0.75em; color:#94a3b8; font-style:italic;'>{md}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
 
                 # --- POWER SCORES (debug & transparence) ---
                 ps1, ps2, ps3 = st.columns(3)
