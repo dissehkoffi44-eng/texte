@@ -29,8 +29,8 @@ CHAT_ID = st.secrets.get("CHAT_ID")
 
 # --- RÉFÉRENTIELS HARMONIQUES ---
 NOTES_LIST = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-MODAL_MODES = ['major', 'minor', 'dorian', 'phrygian', 'lydian', 'mixolydian', 'locrian']
-NOTES_ORDER = [f"{n} {m}" for n in NOTES_LIST for m in ['major', 'minor']]
+MODAL_MODES = ['ionian', 'major', 'lydian', 'mixolydian', 'dorian', 'aeolian', 'minor', 'phrygian', 'locrian']
+NOTES_ORDER = [f"{n} {m}" for n in NOTES_LIST for m in MODAL_MODES]
 
 CAMELOT_MAP = {
     'C major': '8B', 'C# major': '3B', 'D major': '10B', 'D# major': '5B', 'E major': '12B', 'F major': '7B',
@@ -39,60 +39,89 @@ CAMELOT_MAP = {
     'F# minor': '11A', 'G minor': '6A', 'G# minor': '1A', 'A minor': '8A', 'A# minor': '3A', 'B minor': '10A'
 }
 
+# --- PROFILS DE RÉFÉRENCE MODAUX COMPLETS ---
+# Chaque modèle psychoacoustique est étendu aux 7 modes grecs.
+# Les profils Dorian/Phrygien/Lydien/Mixolydien/Locrien sont dérivés des
+# profils Krumhansl/Temperley/Bellman par rotation et ajustement des degrés caractéristiques.
 PROFILES = {
     "krumhansl": {
+        "ionian":     [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88],
+        "aeolian":    [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17],
+        "dorian":     [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.74, 4.75, 3.98, 4.02, 3.34, 3.17],
+        "phrygian":   [6.33, 5.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17],
+        "lydian":     [6.35, 2.23, 3.48, 2.33, 5.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88],
+        "mixolydian": [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 5.29, 2.88],
+        "locrian":    [6.33, 5.68, 3.52, 5.38, 2.60, 3.53, 1.54, 1.75, 3.98, 2.69, 3.34, 3.17],
+        # Alias classiques maintenus pour rétrocompatibilité
         "major": [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88],
-        "minor": [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
+        "minor": [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17],
     },
     "temperley": {
+        "ionian":     [5.0, 2.0, 3.5, 2.0, 4.5, 4.0, 2.0, 4.5, 2.0, 3.5, 1.5, 4.0],
+        "aeolian":    [5.0, 2.0, 3.5, 4.5, 2.0, 4.0, 2.0, 4.5, 3.5, 2.0, 1.5, 4.0],
+        "dorian":     [5.0, 2.0, 3.5, 4.5, 2.0, 4.0, 2.5, 4.5, 3.5, 3.5, 1.5, 4.0],
+        "phrygian":   [5.0, 4.5, 3.5, 4.5, 2.0, 4.0, 2.0, 4.5, 3.5, 2.0, 1.5, 4.0],
+        "lydian":     [5.0, 2.0, 3.5, 2.0, 4.5, 4.0, 4.5, 4.5, 2.0, 3.5, 1.5, 4.0],
+        "mixolydian": [5.0, 2.0, 3.5, 2.0, 4.5, 4.0, 2.0, 4.5, 2.0, 3.5, 4.0, 4.0],
+        "locrian":    [5.0, 4.5, 3.5, 4.5, 2.0, 4.0, 2.0, 2.0, 3.5, 2.0, 1.5, 4.0],
         "major": [5.0, 2.0, 3.5, 2.0, 4.5, 4.0, 2.0, 4.5, 2.0, 3.5, 1.5, 4.0],
-        "minor": [5.0, 2.0, 3.5, 4.5, 2.0, 4.0, 2.0, 4.5, 3.5, 2.0, 1.5, 4.0]
+        "minor": [5.0, 2.0, 3.5, 4.5, 2.0, 4.0, 2.0, 4.5, 3.5, 2.0, 1.5, 4.0],
     },
     "bellman": {
+        "ionian":     [16.8, 0.86, 12.95, 1.41, 13.49, 11.93, 1.25, 16.74, 1.56, 12.81, 1.89, 12.44],
+        "aeolian":    [18.16, 0.69, 12.99, 13.34, 1.07, 11.15, 1.38, 17.2, 13.62, 1.27, 12.79, 2.4],
+        "dorian":     [18.16, 0.69, 12.99, 13.34, 1.07, 11.15, 1.88, 17.2, 13.62, 12.81, 1.89, 2.4],
+        "phrygian":   [18.16, 13.69, 12.99, 13.34, 1.07, 11.15, 1.38, 17.2, 13.62, 1.27, 1.89, 2.4],
+        "lydian":     [16.8, 0.86, 12.95, 1.41, 13.49, 11.93, 13.25, 16.74, 1.56, 12.81, 1.89, 12.44],
+        "mixolydian": [16.8, 0.86, 12.95, 1.41, 13.49, 11.93, 1.25, 16.74, 1.56, 12.81, 12.89, 12.44],
+        "locrian":    [18.16, 13.69, 12.99, 13.34, 1.07, 11.15, 1.38, 2.2, 13.62, 1.27, 1.89, 2.4],
         "major": [16.8, 0.86, 12.95, 1.41, 13.49, 11.93, 1.25, 16.74, 1.56, 12.81, 1.89, 12.44],
-        "minor": [18.16, 0.69, 12.99, 13.34, 1.07, 11.15, 1.38, 17.2, 13.62, 1.27, 12.79, 2.4]
+        "minor": [18.16, 0.69, 12.99, 13.34, 1.07, 11.15, 1.38, 17.2, 13.62, 1.27, 12.79, 2.4],
     }
 }
 
-# --- FIX PERFORMANCE : Précomputation des profils roulés ---
-# Évite des milliers de np.roll() redondants dans la boucle d'analyse.
-# Ces tableaux sont calculés une seule fois au démarrage de l'application.
+# --- MAPPING MODE GREC → FAMILLE CAMELOT ---
+# Utilisé par get_safe_camelot() pour projeter tout mode vers A (mineur) ou B (majeur)
+MODAL_TO_CAMELOT_TYPE = {
+    'ionian':     'major',
+    'lydian':     'major',
+    'mixolydian': 'major',
+    'major':      'major',
+    'aeolian':    'minor',
+    'dorian':     'minor',
+    'phrygian':   'minor',
+    'locrian':    'minor',
+    'minor':      'minor',
+}
+
+# Liste complète des modes actifs (utilisée dans les boucles)
+ALL_MODES = ['ionian', 'aeolian', 'dorian', 'phrygian', 'lydian', 'mixolydian', 'locrian']
+
+# Tierce caractéristique par famille de mode (majeure +4 / mineure +3)
+MODE_THIRD = {
+    'ionian': 4, 'lydian': 4, 'mixolydian': 4, 'major': 4,
+    'aeolian': 3, 'dorian': 3, 'phrygian': 3, 'locrian': 3, 'minor': 3,
+}
+
+# --- PRÉCOMPUTATION DES PROFILS ROULÉS (tous modes) ---
+# 3 modèles × 9 modes × 12 toniques = 324 tableaux précalculés au démarrage
 PROFILES_ROLLED = {
     p_name: {
         mode: [np.roll(PROFILES[p_name][mode], i) for i in range(12)]
-        for mode in ["major", "minor"]
+        for mode in ALL_MODES + ['major', 'minor']  # inclut alias classiques
     }
     for p_name in PROFILES
 }
 
-# --- RÉFÉRENTIEL MODAL ÉTENDU (Modes Grecs) ---
-# Chaque mode est défini par ses demi-tons caractéristiques (profil de Krumhansl adapté).
-MODES_PROFILES = {
-    "ionian":     [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88],  # = Major
-    "aeolian":    [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17],  # = Minor naturel
-    "dorian":     [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.74, 4.75, 3.98, 4.02, 3.34, 3.17],  # VI majeur
-    "phrygian":   [6.33, 5.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17],  # II♭ caractéristique
-    "lydian":     [6.35, 2.23, 3.48, 2.33, 5.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88],  # IV# caractéristique
-    "mixolydian": [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 5.29, 2.88],  # VII♭ caractéristique
-    "locrian":    [6.33, 5.68, 3.52, 5.38, 2.60, 3.53, 1.54, 1.75, 3.98, 2.69, 3.34, 3.17],  # V♭ + II♭ instables
-}
-
-# Précomputation des 7 × 12 profils modaux roulés
+# Alias maintenus pour solve_key_sniper_modal (basé sur MODAL_PROFILES_ROLLED)
+MODES_PROFILES = {m: PROFILES["krumhansl"][m] for m in ALL_MODES}
 MODAL_PROFILES_ROLLED = {
     m_name: [np.roll(MODES_PROFILES[m_name], i) for i in range(12)]
     for m_name in MODES_PROFILES
 }
 
-# Mapping mode → famille Camelot (A = mineur, B = majeur)
-MODAL_CAMELOT_FAMILY = {
-    "ionian":     "major",
-    "aeolian":    "minor",
-    "dorian":     "minor",
-    "phrygian":   "minor",
-    "lydian":     "major",
-    "mixolydian": "major",
-    "locrian":    "minor",
-}
+# Mapping mode → famille Camelot (rétrocompatibilité)
+MODAL_CAMELOT_FAMILY = MODAL_TO_CAMELOT_TYPE
 
 # --- STYLES CSS ---
 st.markdown("""
@@ -159,8 +188,8 @@ def arbitrage_expert_universel(chroma, bass_vec, key_cons, key_dom, cam_map):
       - 'dist_num'   : int  — distance numérique Camelot (0-6).
       - 'dist_mode'  : int  — distance de mode (0=même, 1=croisé).
     """
-    cam_c = cam_map.get(key_cons)
-    cam_d = cam_map.get(key_dom)
+    cam_c = get_safe_camelot(key_cons)
+    cam_d = get_safe_camelot(key_dom)
 
     # Garde-fou : clés inconnues du référentiel Camelot → pas d'arbitrage
     if not cam_c or not cam_d:
@@ -282,11 +311,16 @@ def detect_harmonic_sections(y, sr, duration, step=6, min_harm_duration=20, harm
 def detect_cadence_resolution(timeline, final_key):
     """
     Détection des cadences de résolution (ex. : V-I) pour valider la tonique.
+    Compatible avec les modes grecs (ex. "A dorian", "D mixolydian").
     """
-    note, mode = final_key.split()
+    parts = final_key.split()
+    note = parts[0]
+    mode = parts[1] if len(parts) > 1 else 'ionian'
     root_idx = NOTES_LIST.index(note)
     dom_idx = (root_idx + 7) % 12
     subdom_idx = (root_idx + 5) % 12
+    # Famille harmonique pour les comparaisons cadentielles
+    is_minor_family = MODAL_TO_CAMELOT_TYPE.get(mode, 'major') == 'minor'
 
     resolution_count = 0
     for i in range(1, len(timeline)):
@@ -294,9 +328,11 @@ def detect_cadence_resolution(timeline, final_key):
         curr_note = timeline[i]["Note"]
 
         dom_key = f"{NOTES_LIST[dom_idx]} {mode}"
-        if mode == 'minor':
-            if (prev_note == f"{NOTES_LIST[dom_idx]} major" or prev_note == dom_key) and curr_note == final_key:
-                resolution_count += 1 if 'major' in prev_note else 0.5
+        if is_minor_family:
+            if (prev_note == f"{NOTES_LIST[dom_idx]} ionian" or
+                prev_note == f"{NOTES_LIST[dom_idx]} major" or
+                prev_note == dom_key) and curr_note == final_key:
+                resolution_count += 1 if ('major' in prev_note or 'ionian' in prev_note) else 0.5
         else:
             if prev_note == dom_key and curr_note == final_key:
                 resolution_count += 1
@@ -314,10 +350,32 @@ def detect_cadence_resolution(timeline, final_key):
     cadence_score = resolution_count + (last_resolutions * 2)
     return cadence_score
 
+def get_safe_camelot(key_str):
+    """
+    Conversion sécurisée vers la roue de Camelot pour tous les modes (y compris grecs).
+    Projette Dorian/Phrygien/Locrian → famille A (mineur)
+    et Lydien/Mixolydien/Ionian → famille B (majeur).
+    """
+    if not key_str or "Unknown" in key_str:
+        return "??"
+    parts = key_str.strip().split()
+    if len(parts) < 2:
+        return "??"
+    note = parts[0]
+    mode = parts[1]
+    camelot_mode = MODAL_TO_CAMELOT_TYPE.get(mode, "major")
+    return CAMELOT_MAP.get(f"{note} {camelot_mode}", "??")
+
+
 def solve_key_sniper(chroma_vector, bass_vector):
     """
-    FIX PERFORMANCE : utilise PROFILES_ROLLED précomputé au lieu de recalculer
-    np.roll() à chaque appel (économise ~36 appels roll par segment analysé).
+    Moteur de détection modal complet — 7 Modes Grecs × 3 modèles psychoacoustiques × 12 toniques.
+
+    Remplace l'ancienne boucle Major/Minor par une itération sur ALL_MODES.
+    Chaque mode dispose de :
+      - Son propre profil de corrélation (Krumhansl/Temperley/Bellman modal)
+      - Sa tierce caractéristique (majeure +4 ou mineure +3 selon famille)
+      - Pondération basse et quinte communes à tous les modes
     """
     best_overall_score = -1
     best_key = "Unknown"
@@ -325,32 +383,34 @@ def solve_key_sniper(chroma_vector, bass_vector):
     cv = (chroma_vector - chroma_vector.min()) / (chroma_vector.max() - chroma_vector.min() + 1e-6)
     bv = (bass_vector - bass_vector.min()) / (bass_vector.max() - bass_vector.min() + 1e-6)
 
-    for mode in ["major", "minor"]:
+    for m_name in ALL_MODES:
         for i in range(12):
             profile_scores = []
+            third_idx = (i + MODE_THIRD[m_name]) % 12
+
             for p_name in PROFILES_ROLLED:
-                rolled = PROFILES_ROLLED[p_name][mode][i]  # Précalculé — pas de roll ici
+                rolled = PROFILES_ROLLED[p_name][m_name][i]
                 score = np.corrcoef(cv, rolled)[0, 1]
 
-                if mode == "minor":
-                    dom_idx = (i + 7) % 12
-                    leading_tone = (i + 11) % 12
-                    if cv[dom_idx] > 0.45 and cv[leading_tone] > 0.35:
-                        score *= 1.35
+                # Boost basse : si la tonique est dominante dans les graves
+                if bv[i] > 0.6:
+                    score += (bv[i] * 0.2)
 
-                if bv[i] > 0.6: score += (bv[i] * 0.2)
-
+                # Validation de la Quinte (stable pour presque tous les modes sauf Locrian)
                 fifth_idx = (i + 7) % 12
-                if cv[fifth_idx] > 0.5: score += 0.1
-                third_idx = (i + 4) % 12 if mode == "major" else (i + 3) % 12
-                if cv[third_idx] > 0.5: score += 0.1
+                if m_name != 'locrian' and cv[fifth_idx] > 0.5:
+                    score += 0.1
+
+                # Validation de la Tierce spécifique au mode
+                if cv[third_idx] > 0.5:
+                    score += 0.1
 
                 profile_scores.append(score)
 
             avg_score = np.mean(profile_scores)
             if avg_score > best_overall_score:
                 best_overall_score = avg_score
-                best_key = f"{NOTES_LIST[i]} {mode}"
+                best_key = f"{NOTES_LIST[i]} {m_name}"
 
     return {"key": best_key, "score": best_overall_score}
 
@@ -443,32 +503,39 @@ def get_camelot_modal(key_str):
 
 def get_key_score(key, chroma_vector, bass_vector):
     """
-    FIX PERFORMANCE : utilise PROFILES_ROLLED précomputé.
+    Calcul du score de confiance pour une clé donnée — supporte tous les modes grecs.
+    Utilise PROFILES_ROLLED précomputé pour éviter les np.roll() redondants.
     """
-    note, mode = key.split()
+    parts = key.split()
+    note = parts[0]
+    mode = parts[1] if len(parts) > 1 else 'ionian'
     root_idx = NOTES_LIST.index(note)
 
+    # Normalisation des vecteurs chroma et basse
     cv_norm = (chroma_vector - chroma_vector.min()) / (chroma_vector.max() - chroma_vector.min() + 1e-6)
     bv_norm = (bass_vector - bass_vector.min()) / (bass_vector.max() - bass_vector.min() + 1e-6)
 
+    third_idx = (root_idx + MODE_THIRD.get(mode, 4)) % 12
+    fifth_idx = (root_idx + 7) % 12
+
     profile_scores = []
     for p_name in PROFILES_ROLLED:
-        rolled = PROFILES_ROLLED[p_name][mode][root_idx]  # Précalculé — pas de roll ici
-        corr = np.corrcoef(cv_norm, rolled)[0, 1]
-        score = corr
+        # Utilise le mode exact s'il est disponible, sinon fallback sur major/minor
+        if mode in PROFILES_ROLLED[p_name]:
+            rolled = PROFILES_ROLLED[p_name][mode][root_idx]
+        else:
+            fallback = MODAL_TO_CAMELOT_TYPE.get(mode, 'major')
+            rolled = PROFILES_ROLLED[p_name][fallback][root_idx]
 
-        if mode == "minor":
-            dom_idx = (root_idx + 7) % 12
-            leading_tone = (root_idx + 11) % 12
-            if cv_norm[dom_idx] > 0.45 and cv_norm[leading_tone] > 0.35:
-                score *= 1.35
+        score = np.corrcoef(cv_norm, rolled)[0, 1]
 
-        if bv_norm[root_idx] > 0.6: score += (bv_norm[root_idx] * 0.2)
+        if bv_norm[root_idx] > 0.6:
+            score += (bv_norm[root_idx] * 0.2)
 
-        fifth_idx = (root_idx + 7) % 12
-        if cv_norm[fifth_idx] > 0.5: score += 0.1
-        third_idx = (root_idx + 4) % 12 if mode == "major" else (root_idx + 3) % 12
-        if cv_norm[third_idx] > 0.5: score += 0.1
+        if mode != 'locrian' and cv_norm[fifth_idx] > 0.5:
+            score += 0.1
+        if cv_norm[third_idx] > 0.5:
+            score += 0.1
 
         profile_scores.append(score)
 
@@ -578,7 +645,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
         # Étape A : Calcul de la présence de la clé retenue par l'algorithme (Consonance)
         final_vote_count = votes.get(final_key, 0)
         final_percentage = (final_vote_count / total_votes * 100) if total_votes > 0 else 0
-        dominant_camelot = CAMELOT_MAP.get(dominant_key, "??")
+        dominant_camelot = get_safe_camelot(dominant_key)
 
         mod_detected = len(most_common) > 1 and (votes[most_common[1][0]] / sum(votes.values())) > 0.25
         target_key = most_common[1][0] if mod_detected else None
@@ -640,22 +707,14 @@ def process_audio(audio_file, file_name, progress_placeholder):
         dom_power   = raw_dominant_conf * np.sqrt(max(dominant_percentage, 0))
         power_ratio = dom_power / final_power if final_power > 0 else 0
 
-        # --- SÉCURITÉ ANTI-ERREUR STATISTIQUE (VERSION BLINDÉE) ---
-        # RÈGLE 1 : Si la clé retenue est un "fantôme" (présence < 5%) et qu'une dominante existe.
+        # --- SÉCURITÉ ANTI-ERREUR (CORRIGÉE v6.1 : Pas d'écrasement) ---
+        # On identifie les anomalies mais on ne remplace PAS final_key.
+        # Le moteur de décision (Priorités ci-dessous) choisit quoi afficher.
+        # Cela préserve les deux mesures brutes (Consonance ET Dominante) pour l'arbitrage.
         est_fantome = (final_percentage < 5.0 and dominant_percentage > 20.0)
-
-        # RÈGLE 2 : Si la dominante est statistiquement écrasante (Ratio de puissance > 1.5).
-        domination_statistique = (power_ratio > 1.5)
-
-        # Application de la bascule de sécurité
-        if (final_conf < 0) or est_fantome or domination_statistique:
-            final_key        = dominant_key
-            final_conf       = dominant_conf
-            raw_final_conf   = dominant_conf
-            final_percentage = dominant_percentage
-            # Recalcul des scores de puissance pour l'affichage
-            final_power = raw_final_conf * np.sqrt(max(final_percentage, 0))
-            power_ratio = dom_power / final_power if final_power > 0 else 0
+        domination_statistique = (power_ratio > 1.25)
+        # [NEUTRALISÉ v6.1] — L'ancienne bascule écrasait final_key, faussant l'arbitrage.
+        # La logique de priorité (FORCE SUPRÊME, etc.) gère déjà ces cas proprement.
 
         # Pré-calcul de l'arbitrage universel (Bass & Dissonance Guard — v13.0)
         decision_pivot = None
@@ -733,11 +792,11 @@ def process_audio(audio_file, file_name, progress_placeholder):
         # ══════════════════════════════════════════════════════════════════════════
 
         res_obj = {
-            "key": final_key, "camelot": CAMELOT_MAP.get(final_key, "??"),
+            "key": final_key, "camelot": get_safe_camelot(final_key),
             "conf": min(int(raw_final_conf), 100),  # Plafond uniquement pour l'esthétique
             "tuning": round(440 * (2**(tuning/12)), 1), "timeline": timeline,
             "chroma": chroma_avg, "modulation": mod_detected,
-            "target_key": target_key, "target_camelot": CAMELOT_MAP.get(target_key, "??") if target_key else None,
+            "target_key": target_key, "target_camelot": get_safe_camelot(target_key) if target_key else None,
             "name": file_name,
             "modulation_time_str": seconds_to_mmss(modulation_time) if mod_detected else None,
             "mod_target_percentage": round(target_percentage, 1) if mod_detected else 0,
@@ -752,7 +811,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
             "dom_power": round(dom_power, 1),
             "power_ratio": round(power_ratio, 2),
             "confiance_pure": confiance_pure_key,
-            "pure_camelot": CAMELOT_MAP.get(confiance_pure_key, "??"),
+            "pure_camelot": get_safe_camelot(confiance_pure_key),
             "avis_expert": avis_expert,
             "color_bandeau": color_bandeau,
             # --- DONNÉES MODALES ---
@@ -926,7 +985,7 @@ if uploaded_files:
                 st.markdown(f"""
                     <div class="report-card" style="background:{analysis_data['color_bandeau']};">
                         <p style="letter-spacing:5px; opacity:0.8; font-size:0.7em; margin-bottom:0px;">
-                            SNIPER ENGINE v6.0 — MODAL | {analysis_data['avis_expert']}
+                            SNIPER ENGINE v6.1 — MODAL | {analysis_data['avis_expert']}
                         </p>
                         <h1 style="font-size:5em; margin:0px 0; font-weight:900; line-height:1; text-align: center;">
                             {analysis_data['pure_camelot']}
@@ -935,10 +994,10 @@ if uploaded_files:
                             {analysis_data['confiance_pure'].upper()}
                         </p>
                         <hr style="border:0; border-top:1px solid rgba(255,255,255,0.2); width:50%; margin: 20px auto;">
-                        <p style="font-size:0.9em; opacity:0.7; font-family: 'JetBrains Mono', monospace;">
-                            DÉTAILS : Consonance {analysis_data['key'].upper()} | PRÉSENCE {analysis_data.get('key_presence', analysis_data.get('dominant_percentage', 0))}% | CONFIANCE {analysis_data['conf']}%
-                            &nbsp;·&nbsp; Dominante {analysis_data['dominant_key'].upper()} ({analysis_data['dominant_camelot']}) | PRÉSENCE {analysis_data['dominant_percentage']}% | CONFIANCE {analysis_data['dominant_conf']}%
-                        </p>
+                        <div style="display: flex; justify-content: space-around; font-family: 'JetBrains Mono', monospace; font-size: 0.85em; opacity: 0.85; flex-wrap: wrap; gap: 8px;">
+                            <div>🎯 CONSONANCE :&nbsp;<b>{analysis_data['key'].upper()}</b>&nbsp;({analysis_data.get('key_presence', 0)}%&nbsp;|&nbsp;{analysis_data['conf']}%)</div>
+                            <div>📊 DOMINANTE :&nbsp;<b>{analysis_data['dominant_key'].upper()}</b>&nbsp;({analysis_data['dominant_camelot']}&nbsp;|&nbsp;{analysis_data['dominant_percentage']}%&nbsp;|&nbsp;{analysis_data['dominant_conf']}%)</div>
+                        </div>
                         {mod_alert}
                     </div>
                 """, unsafe_allow_html=True)
