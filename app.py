@@ -155,11 +155,14 @@ st.markdown("""
 
 # --- MOTEURS DE CALCUL ---
 
-def arbitrage_expert_universel(chroma, bass_vec, key_cons, key_dom, cam_map):
+def arbitrage_expert_universel(chroma, bass_vec, key_cons, key_dom, cam_map, y_harm=None, sr=None):
     """
-    Arbitrage Expert Universel v13.0 — "The Bass & Dissonance Guard"
+    Arbitrage Expert Universel v14.0 — "The Bass & Dissonance Guard + Sub-Bass Priority"
 
-    Améliorations vs v12.1 :
+    Améliorations vs v13.0 :
+      - Intègre l'analyse Sub-Bass (40–100Hz) comme juge de paix ultime.
+        Si la sub-basse de la Dominante domine celle de la Consonance de 20%+,
+        la Dominante est déclarée gagnante (BASS_DOMINANCE).
       - Intègre le vecteur basse (bass_vec) dans le calcul de force harmonique
         (pondération : Quinte 50% + Tierce 30% + Basse 20%).
       - Filtre de note interdite (Anti-Confusion Quinte) :
@@ -179,6 +182,8 @@ def arbitrage_expert_universel(chroma, bass_vec, key_cons, key_dom, cam_map):
     key_cons : str — clé Consonance (ex. "A minor").
     key_dom  : str — clé Dominante (ex. "E minor").
     cam_map  : dict — mapping clé → Camelot (ex. CAMELOT_MAP).
+    y_harm   : np.ndarray (optionnel) — signal harmonique brut pour analyse sub-basse.
+    sr       : int (optionnel) — sample rate pour l'analyse sub-basse.
 
     Retourne
     --------
@@ -187,13 +192,14 @@ def arbitrage_expert_universel(chroma, bass_vec, key_cons, key_dom, cam_map):
       - 'duel_actif' : bool — True si un duel de voisinage a eu lieu.
       - 'dist_num'   : int  — distance numérique Camelot (0-6).
       - 'dist_mode'  : int  — distance de mode (0=même, 1=croisé).
+      - 'type'       : str  — type de décision (ex. 'BASS_DOMINANCE').
     """
     cam_c = get_safe_camelot(key_cons)
     cam_d = get_safe_camelot(key_dom)
 
     # Garde-fou : clés inconnues du référentiel Camelot → pas d'arbitrage
     if not cam_c or not cam_d:
-        return {"key": key_cons, "duel_actif": False, "dist_num": 99, "dist_mode": 99}
+        return {"key": key_cons, "duel_actif": False, "dist_num": 99, "dist_mode": 99, "type": "NONE"}
 
     # Extraction des coordonnées Camelot
     val_c, mode_c = int(cam_c[:-1]), cam_c[-1]
@@ -232,12 +238,21 @@ def arbitrage_expert_universel(chroma, bass_vec, key_cons, key_dom, cam_map):
             if chroma[si_idx] > 0.15:
                 force_d *= 1.25  # Boost C major (ou G major caché)
 
+        # --- TEST DE DOMINANCE SUB-BASSE (Étape B) ---
+        # Si le signal y_harm est disponible, on calcule le vecteur sub-basse (40–100Hz).
+        # Si la sub-basse de la Dominante dépasse celle de la Consonance de 20%+,
+        # la Dominante est déclarée gagnante directement (BASS_DOMINANCE).
+        if y_harm is not None and sr is not None:
+            sub_vec = get_sub_bass_priority(y_harm, sr)
+            if sub_vec[idx_d] > sub_vec[idx_c] * 1.2:
+                return {"key": key_dom, "duel_actif": True, "dist_num": dist_num, "dist_mode": dist_mode, "type": "BASS_DOMINANCE"}
+
         # La dominante gagne si elle est spectralement plus forte de 15% (seuil relevé vs v12)
         winner = key_dom if force_d > force_c * 1.15 else key_cons
-        return {"key": winner, "duel_actif": True, "dist_num": dist_num, "dist_mode": dist_mode}
+        return {"key": winner, "duel_actif": True, "dist_num": dist_num, "dist_mode": dist_mode, "type": "SPECTRAL"}
 
     # Par défaut : hors zone de voisinage → pas de duel
-    return {"key": key_cons, "duel_actif": False, "dist_num": dist_num, "dist_mode": dist_mode}
+    return {"key": key_cons, "duel_actif": False, "dist_num": dist_num, "dist_mode": dist_mode, "type": "NONE"}
 
 def seconds_to_mmss(seconds):
     if seconds is None:
@@ -258,6 +273,19 @@ def get_bass_priority(y, sr):
     y_bass = lfilter(b, a, y)
     chroma_bass = librosa.feature.chroma_cqt(y=y_bass, sr=sr, n_chroma=12)
     return np.mean(chroma_bass, axis=1)
+
+def get_sub_bass_priority(y, sr):
+    """
+    Analyse Sub-Bass chirurgicale (40Hz–100Hz) — Étape A.
+    Filtre plus serré que get_bass_priority (150Hz) pour isoler
+    les fréquences sub-graves qui définissent la tonique réelle.
+    """
+    nyq = 0.5 * sr
+    # Filtre plus serré pour le Sub-Bass (40Hz à 100Hz)
+    b, a = butter(2, [40/nyq, 100/nyq], btype='band')
+    y_sub = lfilter(b, a, y)
+    chroma_sub = librosa.feature.chroma_cqt(y=y_sub, sr=sr, n_chroma=12)
+    return np.mean(chroma_sub, axis=1)
 
 def detect_harmonic_sections(y, sr, duration, step=6, min_harm_duration=20, harm_threshold=0.3, perc_threshold=0.5):
     """
@@ -689,6 +717,15 @@ def process_audio(audio_file, file_name, progress_placeholder):
         progress_bar.empty()
 
         # ══════════════════════════════════════════════════════════════════════════
+        # --- INDICE DE STABILITÉ HARMONIQUE ---
+        # Calcule combien de clés significatives se partagent le top des votes.
+        # Si ≥ 3 clés captent chacune > 10% des votes → morceau instable.
+        # ══════════════════════════════════════════════════════════════════════════
+        top_votes = [v for k, v in most_common if v > total_votes * 0.1]
+        stability_index = 100 / len(top_votes) if top_votes else 0
+        is_unstable = len(top_votes) >= 3  # Plus de 3 clés significatives
+
+        # ══════════════════════════════════════════════════════════════════════════
         # --- MOTEUR DE DÉCISION SNIPER V12.1 — JUGE DE PAIX HARMONIQUE ---
         # ══════════════════════════════════════════════════════════════════════════
 
@@ -716,23 +753,27 @@ def process_audio(audio_file, file_name, progress_placeholder):
         # [NEUTRALISÉ v6.1] — L'ancienne bascule écrasait final_key, faussant l'arbitrage.
         # La logique de priorité (FORCE SUPRÊME, etc.) gère déjà ces cas proprement.
 
-        # Pré-calcul de l'arbitrage universel (Bass & Dissonance Guard — v13.0)
+        # Pré-calcul de l'arbitrage universel (Bass & Dissonance Guard — v14.0)
         decision_pivot = None
         arb_dist_num   = 99
         arb_dist_mode  = 99
+        arb_type       = "NONE"
         if final_conf >= 70 and dominant_conf >= 70:  # Seuil abaissé à 70 → plus de duels activés
             arb_result = arbitrage_expert_universel(
                 chroma_avg,
                 bass_global,   # Vecteur basse pour pondération harmonique avancée
                 final_key,
                 dominant_key,
-                CAMELOT_MAP
+                CAMELOT_MAP,
+                y_harm,        # Signal harmonique pour analyse sub-basse (40–100Hz)
+                sr             # Sample rate associé
             )
             # Le pivot est actif si et seulement si un duel de voisinage a eu lieu
             if arb_result["duel_actif"]:
                 decision_pivot = arb_result["key"]
                 arb_dist_num   = arb_result["dist_num"]
                 arb_dist_mode  = arb_result["dist_mode"]
+                arb_type       = arb_result.get("type", "SPECTRAL")
 
         # 🎯 PRIORITÉ @ : VERROUILLAGE STATISTIQUE (Consonance == Dominante)
         # Si les deux moteurs sont d'accord avec une confiance et présence décente
@@ -754,7 +795,9 @@ def process_audio(audio_file, file_name, progress_placeholder):
         # Le type de voisinage détermine le libellé affiché dans le bandeau.
         elif decision_pivot is not None:
             confiance_pure_key = decision_pivot
-            if arb_dist_num == 0 and arb_dist_mode == 1:
+            if arb_type == "BASS_DOMINANCE":
+                type_duel = "SUB-BASS DOMINANCE"
+            elif arb_dist_num == 0 and arb_dist_mode == 1:
                 type_duel = "VOISIN RELATIF"
             elif arb_dist_num == 1 and arb_dist_mode == 1:
                 type_duel = "VOISIN DIAGONAL"
@@ -818,6 +861,9 @@ def process_audio(audio_file, file_name, progress_placeholder):
             "modal_key": modal_key,
             "modal_camelot": modal_camelot,
             "modal_raw_mode": modal_raw_mode,
+            # --- INDICE DE STABILITÉ ---
+            "stability_score": round(stability_index, 1),
+            "is_unstable": is_unstable,
         }
 
         # --- RAPPORT TELEGRAM ENRICHI (RADAR + TIMELINE) ---
@@ -1001,6 +1047,17 @@ if uploaded_files:
                         {mod_alert}
                     </div>
                 """, unsafe_allow_html=True)
+
+                if analysis_data.get('is_unstable'):
+                    stability_val = analysis_data.get('stability_score', 0)
+                    st.markdown(
+                        f"<div style='background:rgba(245,158,11,0.12); border:1px solid #f59e0b; border-radius:15px; "
+                        f"padding:14px 20px; margin-bottom:12px; font-family:JetBrains Mono,monospace; color:#fbbf24;'>"
+                        f"⚠️ <b>ALERTE INSTABILITÉ</b> — Indice de stabilité : <b>{stability_val}</b> &nbsp;|&nbsp; "
+                        f"Ce morceau change fréquemment de structure harmonique. Évitez les transitions longues."
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
 
                 m2, m3 = st.columns(2)
                 with m2: st.markdown(f"<div class='metric-box'><b>ACCORDAGE</b><br><span style='font-size:2em; color:#58a6ff;'>{analysis_data['tuning']}</span><br>Hz</div>", unsafe_allow_html=True)
