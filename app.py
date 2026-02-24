@@ -892,7 +892,22 @@ def process_audio(audio_file, file_name, progress_placeholder):
                     f" | *CONFIANCE:* `{res_obj['dominant_conf']}%`"
                 )
                 pure_line = f"\n🔒 *TONALITÉ PURE:* `{res_obj['confiance_pure'].upper()} ({res_obj['pure_camelot']})` | *AVIS:* `{res_obj['avis_expert']}`"
-                modal_line = f"\n🎼 *MODE GREC:* `{res_obj.get('modal_key','—').upper()} ({res_obj.get('modal_camelot','??')})` | *MODE:* `{res_obj.get('modal_raw_mode','—').upper()}`"
+                # Mapping des couleurs vers Emojis pour Telegram
+                modal_emojis = {
+                    "ionian": "🟢 (Vert)",
+                    "aeolian": "🔵 (Bleu)",
+                    "dorian": "🟣 (Violet)",
+                    "phrygian": "🔴 (Rouge)",
+                    "lydian": "🟠 (Orange)",
+                    "mixolydian": "💎 (Cyan)",
+                    "locrian": "⚫ (Gris)"
+                }
+                # Récupération de l'émoji correspondant au mode actuel
+                current_mode_emoji = modal_emojis.get(res_obj.get('modal_raw_mode'), "⚪")
+                modal_line = (
+                    f"\n🎼 *MODE DÉTECTÉ :* {current_mode_emoji}"
+                    f"\n└ `{res_obj.get('modal_key','—').upper()} ({res_obj.get('modal_camelot','??')})`"
+                )
 
                 caption = (
                     f"🎯 *RCDJ228 MUSIC SNIPER*\n"
