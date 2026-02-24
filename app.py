@@ -39,6 +39,24 @@ CAMELOT_MAP = {
     'F# minor': '11A', 'G minor': '6A', 'G# minor': '1A', 'A minor': '8A', 'A# minor': '3A', 'B minor': '10A'
 }
 
+# --- TABLEAU CAMELOT ÉTENDU POUR TOUS LES MODES (CORRECTION DES APPROXIMATIONS) ---
+# Basé sur le tableau fourni, avec mapping exact pour chaque mode et tonic.
+# Utilise # pour dièses et b pour bémols (enharmoniques séparés par /).
+CAMELOT_TABLE = {
+    1: {'aeolian': 'G#/Ab', 'dorian': 'C#/Db', 'phrygian': 'D#/Eb', 'locrian': 'A#/Bb', 'ionian': 'B', 'lydian': 'E', 'mixolydian': 'F#/Gb'},
+    2: {'aeolian': 'D#/Eb', 'dorian': 'G#/Ab', 'phrygian': 'A#/Bb', 'locrian': 'F', 'ionian': 'F#/Gb', 'lydian': 'B', 'mixolydian': 'C#/Db'},
+    3: {'aeolian': 'Bb/A#', 'dorian': 'Eb/D#', 'phrygian': 'F', 'locrian': 'C', 'ionian': 'Db/C#', 'lydian': 'Gb/F#', 'mixolydian': 'Ab/G#'},
+    4: {'aeolian': 'F', 'dorian': 'Bb/A#', 'phrygian': 'C', 'locrian': 'G', 'ionian': 'Ab/G#', 'lydian': 'Db/C#', 'mixolydian': 'Eb/D#'},
+    5: {'aeolian': 'C', 'dorian': 'F', 'phrygian': 'G', 'locrian': 'D', 'ionian': 'Eb/D#', 'lydian': 'Ab/G#', 'mixolydian': 'Bb/A#'},
+    6: {'aeolian': 'G', 'dorian': 'C', 'phrygian': 'D', 'locrian': 'A', 'ionian': 'Bb/A#', 'lydian': 'Eb/D#', 'mixolydian': 'F'},
+    7: {'aeolian': 'D', 'dorian': 'G', 'phrygian': 'A', 'locrian': 'E', 'ionian': 'F', 'lydian': 'Bb/A#', 'mixolydian': 'C'},
+    8: {'aeolian': 'A', 'dorian': 'D', 'phrygian': 'E', 'locrian': 'B', 'ionian': 'C', 'lydian': 'F', 'mixolydian': 'G'},
+    9: {'aeolian': 'E', 'dorian': 'A', 'phrygian': 'B', 'locrian': 'F#/Gb', 'ionian': 'G', 'lydian': 'C', 'mixolydian': 'D'},
+    10: {'aeolian': 'B', 'dorian': 'E', 'phrygian': 'F#/Gb', 'locrian': 'C#/Db', 'ionian': 'D', 'lydian': 'G', 'mixolydian': 'A'},
+    11: {'aeolian': 'F#/Gb', 'dorian': 'B', 'phrygian': 'C#/Db', 'locrian': 'G#/Ab', 'ionian': 'A', 'lydian': 'D', 'mixolydian': 'E'},
+    12: {'aeolian': 'C#/Db', 'dorian': 'F#/Gb', 'phrygian': 'G#/Ab', 'locrian': 'D#/Eb', 'ionian': 'E', 'lydian': 'A', 'mixolydian': 'B'},
+}
+
 # --- PROFILS DE RÉFÉRENCE MODAUX COMPLETS ---
 # Chaque modèle psychoacoustique est étendu aux 7 modes grecs.
 # Les profils Dorian/Phrygien/Lydien/Mixolydien/Locrien sont dérivés des
@@ -194,8 +212,8 @@ def arbitrage_expert_universel(chroma, bass_vec, key_cons, key_dom, cam_map, y_h
       - 'dist_mode'  : int  — distance de mode (0=même, 1=croisé).
       - 'type'       : str  — type de décision (ex. 'BASS_DOMINANCE').
     """
-    cam_c = get_safe_camelot(key_cons)
-    cam_d = get_safe_camelot(key_dom)
+    cam_c = get_exact_camelot(key_cons)
+    cam_d = get_exact_camelot(key_dom)
 
     # Garde-fou : clés inconnues du référentiel Camelot → pas d'arbitrage
     if not cam_c or not cam_d:
@@ -378,11 +396,11 @@ def detect_cadence_resolution(timeline, final_key):
     cadence_score = resolution_count + (last_resolutions * 2)
     return cadence_score
 
-def get_safe_camelot(key_str):
+def get_exact_camelot(key_str):
     """
-    Conversion sécurisée vers la roue de Camelot pour tous les modes (y compris grecs).
-    Projette Dorian/Phrygien/Locrian → famille A (mineur)
-    et Lydien/Mixolydien/Ionian → famille B (majeur).
+    Conversion exacte vers la roue de Camelot pour tous les modes (y compris grecs).
+    Utilise le tableau étendu CAMELOT_TABLE pour éviter les approximations major/minor.
+    Gère les enharmoniques (ex. G# == Ab) et mappe 'major' → 'ionian', 'minor' → 'aeolian'.
     """
     if not key_str or "Unknown" in key_str:
         return "??"
@@ -390,10 +408,24 @@ def get_safe_camelot(key_str):
     if len(parts) < 2:
         return "??"
     note = parts[0]
-    mode = parts[1]
-    camelot_mode = MODAL_TO_CAMELOT_TYPE.get(mode, "major")
-    return CAMELOT_MAP.get(f"{note} {camelot_mode}", "??")
-
+    mode = parts[1].lower()
+    if mode == 'major':
+        mode = 'ionian'
+    elif mode == 'minor':
+        mode = 'aeolian'
+    # Recherche dans le tableau
+    for code in range(1, 13):
+        tonic_str = CAMELOT_TABLE[code].get(mode, '')
+        if tonic_str:
+            options = [opt.strip() for opt in tonic_str.split('/')]
+            if note in options:
+                if mode in ['aeolian', 'dorian', 'phrygian']:
+                    suffix = 'A'
+                else:
+                    suffix = 'B'
+                return f"{code}{suffix}"
+    # Fallback si non trouvé (rare)
+    return "??"
 
 def solve_key_sniper(chroma_vector, bass_vector):
     """
@@ -495,39 +527,12 @@ def solve_key_sniper_modal(chroma_vector, bass_vector):
     return best_res
 
 
+def get_safe_camelot(key_str):
+    return get_exact_camelot(key_str)
+
+
 def get_camelot_modal(key_str):
-    """
-    Projection modale vers la roue de Camelot standard (1A–12B).
-
-    Les modes grecs n'existent pas nativement dans le système Camelot.
-    On projette chaque mode vers sa famille A (mineur) ou B (majeur) pour
-    garantir la compatibilité avec le mix DJ professionnel.
-
-    Exemples :
-      "A dorian"     → projeté en "A minor"  → 8A
-      "D lydian"     → projeté en "D major"  → 10B
-      "G mixolydian" → projeté en "G major"  → 9B
-    """
-    parts = key_str.strip().split()
-    if len(parts) < 2:
-        return "??"
-    note = parts[0]
-    mode = " ".join(parts[1:])  # gère les modes composés éventuels
-
-    # Mapping : mode grec → famille Camelot simplifiée
-    modal_map = {
-        "major":      "major",
-        "minor":      "minor",
-        "ionian":     "major",
-        "aeolian":    "minor",
-        "lydian":     "major",
-        "mixolydian": "major",
-        "dorian":     "minor",
-        "phrygian":   "minor",
-        "locrian":    "minor",
-    }
-    simplified_mode = modal_map.get(mode, "major")
-    return CAMELOT_MAP.get(f"{note} {simplified_mode}", "??")
+    return get_exact_camelot(key_str)
 
 def get_key_score(key, chroma_vector, bass_vector):
     """
@@ -650,7 +655,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
         # --- ANALYSE MODALE GLOBALE ---
         res_modal_global = solve_key_sniper_modal(chroma_avg, bass_global)
         modal_key = res_modal_global.get('key', final_key)
-        modal_camelot = get_camelot_modal(modal_key)
+        modal_camelot = get_exact_camelot(modal_key)
         modal_raw_mode = res_modal_global.get('raw_mode', 'ionian')
 
         cadence_score = detect_cadence_resolution(timeline, final_key)
@@ -673,7 +678,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
         # Étape A : Calcul de la présence de la clé retenue par l'algorithme (Consonance)
         final_vote_count = votes.get(final_key, 0)
         final_percentage = (final_vote_count / total_votes * 100) if total_votes > 0 else 0
-        dominant_camelot = get_safe_camelot(dominant_key)
+        dominant_camelot = get_exact_camelot(dominant_key)
 
         mod_detected = len(most_common) > 1 and (votes[most_common[1][0]] / sum(votes.values())) > 0.25
         target_key = most_common[1][0] if mod_detected else None
@@ -835,11 +840,11 @@ def process_audio(audio_file, file_name, progress_placeholder):
         # ══════════════════════════════════════════════════════════════════════════
 
         res_obj = {
-            "key": final_key, "camelot": get_safe_camelot(final_key),
+            "key": final_key, "camelot": get_exact_camelot(final_key),
             "conf": min(int(raw_final_conf), 100),  # Plafond uniquement pour l'esthétique
             "tuning": round(440 * (2**(tuning/12)), 1), "timeline": timeline,
             "chroma": chroma_avg, "modulation": mod_detected,
-            "target_key": target_key, "target_camelot": get_safe_camelot(target_key) if target_key else None,
+            "target_key": target_key, "target_camelot": get_exact_camelot(target_key) if target_key else None,
             "name": file_name,
             "modulation_time_str": seconds_to_mmss(modulation_time) if mod_detected else None,
             "mod_target_percentage": round(target_percentage, 1) if mod_detected else 0,
@@ -854,7 +859,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
             "dom_power": round(dom_power, 1),
             "power_ratio": round(power_ratio, 2),
             "confiance_pure": confiance_pure_key,
-            "pure_camelot": get_safe_camelot(confiance_pure_key),
+            "pure_camelot": get_exact_camelot(confiance_pure_key),
             "avis_expert": avis_expert,
             "color_bandeau": color_bandeau,
             # --- DONNÉES MODALES ---
