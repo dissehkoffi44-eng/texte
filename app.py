@@ -664,6 +664,10 @@ def process_audio(audio_file, file_name, progress_placeholder):
         modal_key = res_modal_global.get('key', final_key)
         modal_camelot = get_exact_camelot(modal_key)
         modal_raw_mode = res_modal_global.get('raw_mode', 'ionian')
+        modal_conf = int(res_modal_global.get('score', 0) * 100)  # Récupération de la confiance modale
+        # NOUVEAU : Calcul de la présence du mode dans la timeline
+        modal_count = sum(1 for t in timeline if t["Mode"] == modal_key)
+        modal_presence = (modal_count / len(timeline) * 100) if len(timeline) > 0 else 0
 
         cadence_score = detect_cadence_resolution(timeline, final_key)
         if cadence_score < 2 and len(most_common) > 1:
@@ -873,6 +877,8 @@ def process_audio(audio_file, file_name, progress_placeholder):
             "modal_key": modal_key,
             "modal_camelot": modal_camelot,
             "modal_raw_mode": modal_raw_mode,
+            "modal_conf": modal_conf,
+            "modal_presence": round(modal_presence, 1),
             # --- INDICE DE STABILITÉ ---
             "stability_score": round(stability_index, 1),
             "is_unstable": is_unstable,
@@ -1080,7 +1086,7 @@ if uploaded_files:
                         </p>
                         <hr style="border:0; border-top:1px solid rgba(255,255,255,0.2); width:50%; margin: 20px auto;">
                         <div style="display: flex; justify-content: space-around; font-family: 'JetBrains Mono', monospace; font-size: 0.85em; opacity: 0.85; flex-wrap: wrap; gap: 8px;">
-                            <div>🎯 CONSONANCE :&nbsp;<b>{analysis_data['key'].upper()}</b>&nbsp;({analysis_data.get('key_presence', 0)}%&nbsp;|&nbsp;{analysis_data['conf']}%)</div>
+                            <div>🎯 CONSONANCE :&nbsp;<b>{analysis_data['key'].upper()} ({analysis_data['camelot']})</b>&nbsp;({analysis_data.get('key_presence', 0)}%&nbsp;|&nbsp;{analysis_data['conf']}%)</div>
                             <div>📊 DOMINANTE :&nbsp;<b>{analysis_data['dominant_key'].upper()}</b>&nbsp;({analysis_data['dominant_camelot']}&nbsp;|&nbsp;{analysis_data['dominant_percentage']}%&nbsp;|&nbsp;{analysis_data['dominant_conf']}%)</div>
                         </div>
                         {mod_alert}
@@ -1130,6 +1136,9 @@ if uploaded_files:
                     f"<b>🎼 MODE DÉTECTÉ</b><br>"
                     f"<span style='font-size:1.8em; color:{mc}; font-weight:900;'>{analysis_data.get('modal_key','—').upper()}</span>"
                     f"&nbsp;&nbsp;<span style='font-size:1em; color:#94a3b8;'>Camelot : <b>{analysis_data.get('modal_camelot','??')}</b></span><br>"
+                    f"<div style='font-size:0.9em; margin-top:5px; color:#94a3b8;'>"
+                    f"🎯 CONFIANCE : <b>{analysis_data.get('modal_conf', 0)}%</b> &nbsp;|&nbsp; 📊 PRÉSENCE : <b>{analysis_data.get('modal_presence', 0)}%</b>"
+                    f"</div>"
                     f"<span style='font-size:0.75em; color:#94a3b8; font-style:italic;'>{md}</span>"
                     f"</div>",
                     unsafe_allow_html=True
