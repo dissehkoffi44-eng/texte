@@ -636,10 +636,17 @@ def process_audio(audio_file, file_name, progress_placeholder):
             res = solve_key_sniper(c_avg, b_seg)
             res_modal = solve_key_sniper_modal(c_avg, b_seg)
 
+            # Calculer la notation Camelot pour ce segment précis
+            segment_camelot = get_exact_camelot(res['key'])
             weight = 3.0 if start > (duration_harm - 15) else 2.0 if start < 10 else 1.0
             votes[res['key']] += int(res['score'] * 100 * weight)
-            timeline.append({"Temps": harm_start + start, "Note": res['key'], "Conf": res['score'],
-                              "Mode": res_modal.get('key', res['key'])})
+            timeline.append({
+                "Temps": harm_start + start,
+                "Note": res['key'],
+                "Camelot": segment_camelot,  # Nouvelle colonne Camelot
+                "Conf": res['score'],
+                "Mode": res_modal.get('key', res['key'])
+            })
 
             p_val = 50 + int((i / len(segments)) * 40)
             update_prog(p_val, "Calcul chirurgical en cours")
@@ -1129,11 +1136,24 @@ if uploaded_files:
 
                 c1, c2 = st.columns([2, 1])
                 with c1:
-                    fig_tl = px.line(pd.DataFrame(timeline), x="Temps", y="Note", markers=True, template="plotly_dark", category_orders={"Note": NOTES_ORDER})
+                    # Préparer l'ordre des catégories pour que l'axe Y soit bien rangé (1A, 1B, 2A, 2B...)
+                    CAMELOT_ORDER = [f"{i}{m}" for i in range(1, 13) for m in ['A', 'B']]
+                    df_tl = pd.DataFrame(timeline)
+                    fig_tl = px.line(
+                        df_tl,
+                        x="Temps",
+                        y="Camelot",  # Utiliser la colonne Camelot
+                        markers=True,
+                        template="plotly_dark",
+                        category_orders={"Camelot": CAMELOT_ORDER},  # Trier par roue de Camelot
+                        hover_data={"Note": True, "Temps": ":.2f"}  # Garder le nom de la note au survol
+                    )
                     fig_tl.update_layout(height=300, margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
                     st.plotly_chart(fig_tl, use_container_width=True, key=f"timeline_{analysis_data['name']}_{i}")
                 with c2:
-                    fig_radar = go.Figure(data=go.Scatterpolar(r=chroma, theta=NOTES_LIST, fill='toself', line_color='#10b981'))
+                    # Créer une liste de labels Camelot pour le radar (basée sur le mode majeur par défaut)
+                    CAMELOT_LABELS = [get_exact_camelot(f"{n} major") for n in NOTES_LIST]
+                    fig_radar = go.Figure(data=go.Scatterpolar(r=chroma, theta=CAMELOT_LABELS, fill='toself', line_color='#10b981'))
                     fig_radar.update_layout(template="plotly_dark", height=300, margin=dict(l=40, r=40, t=30, b=20), polar=dict(radialaxis=dict(visible=False)), paper_bgcolor='rgba(0,0,0,0)')
                     st.plotly_chart(fig_radar, use_container_width=True, key=f"radar_{analysis_data['name']}_{i}")
 
