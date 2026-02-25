@@ -932,13 +932,25 @@ def process_audio(audio_file, file_name, progress_placeholder):
                     f"🛡️ *SECTION HARMONIQUE:* {res_obj['harm_start']} → {res_obj['harm_end']}"
                 )
 
-                fig_radar = go.Figure(data=go.Scatterpolar(r=res_obj['chroma'], theta=NOTES_LIST, fill='toself', line_color='#10b981'))
-                fig_radar.update_layout(template="plotly_dark", title="SPECTRE HARMONIQUE", polar=dict(radialaxis=dict(visible=False)))
+                # Radar avec labels Camelot (mode majeur par défaut)
+                CAMELOT_LABELS_TG = [get_exact_camelot(f"{n} major") for n in NOTES_LIST]
+                fig_radar = go.Figure(data=go.Scatterpolar(r=res_obj['chroma'], theta=CAMELOT_LABELS_TG, fill='toself', line_color='#10b981'))
+                fig_radar.update_layout(template="plotly_dark", title="SPECTRE HARMONIQUE (Camelot)", polar=dict(radialaxis=dict(visible=False)))
                 radar_bytes = fig_radar.to_image(format="png", width=700, height=500)
 
+                # Timeline avec axe Y en notation Camelot
+                CAMELOT_ORDER_TG = [f"{i}{m}" for i in range(1, 13) for m in ['A', 'B']]
                 df_tl = pd.DataFrame(res_obj['timeline'])
-                fig_tl = px.line(df_tl, x="Temps", y="Note", markers=True, template="plotly_dark",
-                                 category_orders={"Note": NOTES_ORDER}, title="ÉVOLUTION TEMPORELLE")
+                fig_tl = px.line(
+                    df_tl,
+                    x="Temps",
+                    y="Camelot",
+                    markers=True,
+                    template="plotly_dark",
+                    category_orders={"Camelot": CAMELOT_ORDER_TG},
+                    hover_data={"Note": True, "Temps": ":.2f"},
+                    title="ÉVOLUTION TEMPORELLE (Camelot)"
+                )
                 timeline_bytes = fig_tl.to_image(format="png", width=1000, height=450)
 
                 media_group = [
