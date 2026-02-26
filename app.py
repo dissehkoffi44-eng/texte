@@ -922,6 +922,9 @@ def process_audio(audio_file, file_name, progress_placeholder):
                     f"\n└ `{res_obj.get('modal_key','—').upper()} ({res_obj.get('modal_camelot','??')})`"
                 )
 
+                camelot_pure_tg = res_obj.get('pure_camelot', res_obj['camelot'])
+                suggestions_block = get_mix_suggestions_text(camelot_pure_tg)
+
                 caption = (
                     f"🎯 *RCDJ228 MUSIC SNIPER*\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
@@ -933,6 +936,9 @@ def process_audio(audio_file, file_name, progress_placeholder):
                     + pure_line
                     + modal_line
                     + f"{mod_line}\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"🔥 *PRO MIX TARGETS ({camelot_pure_tg}):*\n"
+                    f"{suggestions_block}\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
                     f"🎸 *ACCORDAGE:* `{res_obj['tuning']} Hz` ✅\n"
                     f"🛡️ *SECTION HARMONIQUE:* {res_obj['harm_start']} → {res_obj['harm_end']}"
@@ -1021,6 +1027,52 @@ def get_chord_js(btn_id, key_str):
     }};
     """
 
+def get_mix_suggestions_text(cp):
+    """Retourne les suggestions de mix formatées pour Telegram."""
+    try:
+        val = int(''.join(filter(str.isdigit, cp)))
+        let = ''.join(filter(str.isalpha, cp))
+
+        p3  = f"{(val + 3 - 1) % 12 + 1}{let}"      # Tierce Mineure +
+        m3  = f"{(val - 3 - 1) % 12 + 1}{let}"      # Tierce Mineure -
+        p4  = f"{(val + 4 - 1) % 12 + 1}{let}"      # Tierce Majeure +
+        rel = f"{(val - 3 - 1) % 12 + 1}{'A' if let == 'B' else 'B'}"  # Pont Relatif
+
+        return (f"🔹 +3 (Energy): {p3}\n"
+                f"🔹 -3 (Deep): {m3}\n"
+                f"🔸 +4 (Spark): {p4}\n"
+                f"🔄 Relatif: {rel}")
+    except:
+        return "Suggestions indisponibles"
+
+
+def get_mix_suggestions(current_camelot):
+    """Calcule les sauts de tierce mineure et majeure."""
+    try:
+        # Extraction du chiffre et de la lettre (ex: 8A -> 8, A)
+        val = int(''.join(filter(str.isdigit, current_camelot)))
+        letter = ''.join(filter(str.isalpha, current_camelot))
+        
+        # --- TIERCE MINEURE (Ton style actuel) ---
+        plus_3 = f"{(val + 3 - 1) % 12 + 1}{letter}"
+        minus_3 = f"{(val - 3 - 1) % 12 + 1}{letter}"
+        
+        # --- TIERCE MAJEURE (Le "Spark Jump") ---
+        # Le saut de +4 positions sur la roue
+        plus_4 = f"{(val + 4 - 1) % 12 + 1}{letter}"
+        
+        # --- MIX RELATIF SPÉCIAL (ex: 5B -> 2A) ---
+        special = f"{(val - 3 - 1) % 12 + 1}{'A' if letter == 'B' else 'B'}"
+        
+        return {
+            "Tierce Mineure (+3)": plus_3,
+            "Tierce Mineure (-3)": minus_3,
+            "Tierce Majeure (+4)": plus_4,
+            "Pont Relatif": special
+        }
+    except:
+        return None
+
 # --- DASHBOARD PRINCIPAL ---
 st.title("🎯 RCDJ228 MUSIC SNIPER")
 st.markdown("#### Système d'Analyse Harmonique Modale — 7 Modes Grecs × 12 Toniques")
@@ -1092,6 +1144,37 @@ if uploaded_files:
                         {mod_alert}
                     </div>
                 """, unsafe_allow_html=True)
+
+                # --- SNIPER MIX SUGGESTIONS ---
+                camelot_pure = analysis_data.get('pure_camelot', '')
+                suggestions = get_mix_suggestions(camelot_pure)
+                if suggestions:
+                    st.markdown("### 🚀 Sniper Mix Suggestions")
+                    cols = st.columns(4)
+                    
+                    titles = list(suggestions.keys())
+                    values = list(suggestions.values())
+                    
+                    # Couleurs : Bleu (Mineur), Orange (Majeur), Violet (Spécial)
+                    colors = ["#1E90FF", "#1E90FF", "#FF8C00", "#A855F7"] 
+                    
+                    for i in range(4):
+                        with cols[i]:
+                            st.markdown(
+                                f"""
+                                <div style="
+                                    background-color: #1a1c24; 
+                                    padding: 12px; 
+                                    border-radius: 8px; 
+                                    border-top: 4px solid {colors[i]};
+                                    text-align: center;
+                                    box-shadow: 0px 4px 6px rgba(0,0,0,0.2);">
+                                    <p style="margin:0; font-size: 0.75rem; color: #94a3b8; font-weight: bold;">{titles[i]}</p>
+                                    <h2 style="margin:5px 0; color: white; font-family: sans-serif;">{values[i]}</h2>
+                                </div>
+                                """, 
+                                unsafe_allow_html=True
+                            )
 
                 if analysis_data.get('is_unstable'):
                     stability_val = analysis_data.get('stability_score', 0)
