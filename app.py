@@ -791,27 +791,24 @@ def process_audio(audio_file, file_name, progress_placeholder):
                 arb_dist_mode  = arb_result["dist_mode"]
                 arb_type       = arb_result.get("type", "SPECTRAL")
 
-        # ══════════════════════════════════════════════════════════════════════════
-        # --- MOTEUR DE DÉCISION — FUSION DES 4 ÉLÉMENTS (v7.0) ---
-        # Compare Consonance (final_key) et Dominante (dominant_key) en utilisant
-        # le spectre des basses et la présence temporelle pour extraire la
-        # confiance_pure (la réponse unique).
-        # ══════════════════════════════════════════════════════════════════════════
-
-        # Cas idéal : Les deux moteurs sont d'accord avec une confiance suffisante
-        if final_key == dominant_key and final_conf >= 70:
+        # 🎯 PRIORITÉ @ : VERROUILLAGE STATISTIQUE (Consonance == Dominante)
+        # Si les deux moteurs sont d'accord avec une confiance et présence décente
+        if final_key == dominant_key and final_conf >= 70 and final_percentage >= 30:
             confiance_pure_key = final_key
             avis_expert = "💎 VERROUILLAGE STATISTIQUE"
             color_bandeau = "linear-gradient(135deg, #10b981, #059669)"  # Vert Émeraude
 
-        # La dominante est statistiquement beaucoup plus forte (ratio > 1.25)
-        elif power_ratio > 1.25:
+        # ⚡ PRIORITÉ 0 : LA FORCE SUPRÊME (Power Score juge suprême)
+        # Déclenché si la dominante écrase la consonance (ratio > 1.25)
+        # OU si ce sont des voisins et que la dominante est plus solide (ratio > 1.10)
+        elif power_ratio > 1.25 or (decision_pivot and power_ratio > 1.10):
             confiance_pure_key = dominant_key
             avis_expert = f"⚡ FORCE SUPRÊME ({round(dominant_percentage, 1)}%)"
             color_bandeau = "linear-gradient(135deg, #7c3aed, #4c1d95)"  # Violet Puissance
 
-        # Arbitrage chirurgical basé sur les Sub-Basses (40-100Hz)
-        # Le "Mode détecté" et la "Tonique" agissent comme juges
+        # ⚖️ PRIORITÉ 1 : ARBITRAGE HARMONIQUE (Duel de voisinage — affichage systématique)
+        # Déclenché dès qu'un duel spectral a eu lieu sur le Camelot Wheel.
+        # Le type de voisinage détermine le libellé affiché dans le bandeau.
         elif decision_pivot is not None:
             confiance_pure_key = decision_pivot
             if arb_type == "BASS_DOMINANCE":
@@ -822,14 +819,34 @@ def process_audio(audio_file, file_name, progress_placeholder):
                 type_duel = "VOISIN DIAGONAL"
             else:
                 type_duel = "VOISIN PROCHE"
-            avis_expert   = f"⚖️ ARBITRAGE HARMONIQUE : {type_duel}"
+            avis_expert   = f"⚖️ ARBITRAGE : {type_duel}"
             color_bandeau = "linear-gradient(135deg, #0369a1, #0c4a6e)"  # Bleu Océan
 
-        # Fallback sur la consonance stable
-        else:
+        # 🏁 PRIORITÉ 2 : MODULATION DYNAMIQUE (Proportionnelle)
+        elif (mod_detected and ends_in_target and target_percentage >= 25.0
+              and modulation_time is not None and modulation_time <= dynamic_threshold):
+            confiance_pure_key = target_key
+            avis_expert = f"🏁 MODULATION VALIDÉE ({round(modulation_time)}s / {round(total_duration)}s)"
+            color_bandeau = "linear-gradient(135deg, #4338ca, #1e1b4b)"  # Violet
+
+        # 💎 PRIORITÉ 3 : ACCORD PARFAIT (Consonance = Dominante, confiance ≥ 85%)
+        elif final_key == dominant_key and final_conf >= 85:
             confiance_pure_key = final_key
-            avis_expert = "✅ ANALYSE STABLE"
-            color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"  # Vert
+            avis_expert = "💎 ACCORD PARFAIT"
+            color_bandeau = "linear-gradient(135deg, #059669, #064e3b)"  # Vert Émeraude
+
+        # ✅ FALLBACK : ANALYSE STABLE (Avec Test de Légitimité Power Score)
+        else:
+            # On compare les forces brutes (Confiance × √Présence)
+            # Si la Dominante est 15% plus puissante, elle détrône la Consonance
+            if dom_power > (final_power * 1.2):
+                confiance_pure_key = dominant_key
+                avis_expert = f"✅ STABILITÉ DOMINANTE ({round(dominant_percentage, 1)}%)"
+                color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"  # Vert
+            else:
+                confiance_pure_key = final_key
+                avis_expert = "✅ ANALYSE STABLE"
+                color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"  # Vert
 
         # ══════════════════════════════════════════════════════════════════════════
 
@@ -888,6 +905,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
                     f" | *CONFIANCE:* `{res_obj['dominant_conf']}%`"
                 )
                 pure_line = f"\n🔒 *TONALITÉ PURE:* `{res_obj['confiance_pure'].upper()} ({res_obj['pure_camelot']})` | *AVIS:* `{res_obj['avis_expert']}`"
+                final_line = f"\n🎯 *TONALITÉ FINALE:* `{res_obj.get('final_key','—').upper()} ({res_obj.get('final_camelot','??')})` | *CONFIANCE FUSIONNÉE:* `{res_obj.get('final_conf', 0)}%`"
                 # Mapping des couleurs vers Emojis pour Telegram
                 modal_emojis = {
                     "ionian": "🟢 (Vert)",
@@ -905,7 +923,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
                     f"\n└ `{res_obj.get('modal_key','—').upper()} ({res_obj.get('modal_camelot','??')})`"
                 )
 
-                camelot_pure_tg = res_obj.get('pure_camelot', res_obj['camelot'])
+                camelot_pure_tg = res_obj.get('final_camelot', res_obj.get('pure_camelot', res_obj['camelot']))
                 suggestions_block = get_mix_suggestions_text(camelot_pure_tg)
 
                 caption = (
@@ -917,10 +935,11 @@ def process_audio(audio_file, file_name, progress_placeholder):
                     f" | *CONFIANCE:* `{res_obj['conf']}%`"
                     + dom_line
                     + pure_line
+                    + final_line
                     + modal_line
                     + f"{mod_line}\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
-                    f"🔥 *PRO MIX TARGETS ({camelot_pure_tg}):*\n"
+                    f"🔥 *PRO MIX TARGETS ({res_obj.get('final_camelot', camelot_pure_tg)}):*\n"
                     f"{suggestions_block}\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
                     f"🎸 *ACCORDAGE:* `{res_obj['tuning']} Hz` ✅\n"
@@ -980,6 +999,12 @@ def process_audio(audio_file, file_name, progress_placeholder):
         del res_obj['timeline']
         del res_obj['chroma']
 
+        # --- FUSION FINALE : combine tonalité pure + mode + dominante ---
+        final_result = combine_to_final_key(res_obj)
+        res_obj['final_key']     = final_result['final_key']
+        res_obj['final_camelot'] = final_result['final_camelot']
+        res_obj['final_conf']    = final_result['final_conf']
+
         del y, y_filt
         gc.collect()
         return res_obj
@@ -989,6 +1014,96 @@ def process_audio(audio_file, file_name, progress_placeholder):
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
         raise e
+
+
+def get_advanced_strength_global(idx, mode, chroma_vec, b_vec):
+    """Force harmonique avancée : Quinte (50%) + Tierce (30%) + Basse (20%)."""
+    quinte = chroma_vec[(idx + 7) % 12]
+    tierce = chroma_vec[(idx + 3) % 12] if mode in ('minor', 'aeolian', 'dorian', 'phrygian', 'locrian') else chroma_vec[(idx + 4) % 12]
+    basse  = b_vec[idx]
+    return (quinte * 0.5) + (tierce * 0.3) + (basse * 0.2)
+
+
+def combine_to_final_key(analysis_data):
+    """
+    Fusion finale : combine tonalité pure, dominante et mode détecté
+    pour produire la tonalité définitive (final_key / final_camelot).
+    """
+    cons_key     = analysis_data['key']
+    pure_key     = analysis_data['confiance_pure']
+    modal_key    = analysis_data['modal_key']
+    modal_raw    = analysis_data['modal_raw_mode']
+    modal_conf   = analysis_data['modal_conf']
+    modal_presence = analysis_data['modal_presence']
+    dom_key      = analysis_data['dominant_key']
+
+    chroma = np.load(analysis_data['chroma_path'])
+
+    # Reconstruction du vecteur basse depuis le chroma sauvegardé
+    # (bass_global n'est plus disponible ici, on utilise chroma comme proxy)
+    bass_proxy = chroma.copy()
+
+    # --- Étape A : Base = Tonalité pure arbitrée ---
+    parts = pure_key.split()
+    final_note = parts[0]
+    final_mode = parts[1] if len(parts) > 1 else 'major'
+    final_camelot = analysis_data['pure_camelot']
+
+    # --- Étape B : Intégrer le mode si fiable (conf ≥ 70%, présence ≥ 40%) ---
+    if modal_conf >= 70 and modal_presence >= 40:
+        modal_parts = modal_key.split()
+        modal_note  = modal_parts[0]
+
+        cons_note = cons_key.split()[0]
+        if cons_note in NOTES_LIST and modal_note in NOTES_LIST:
+            cons_idx  = NOTES_LIST.index(cons_note)
+            modal_idx = NOTES_LIST.index(modal_note)
+            dist_note = min(abs(cons_idx - modal_idx), 12 - abs(cons_idx - modal_idx))
+
+            if dist_note <= 1:
+                # Aligné → fusionner le mode (sauf si ionian/aeolian = déjà dans final_mode)
+                if modal_raw not in ('ionian', 'aeolian'):
+                    final_mode = modal_raw
+            else:
+                # Conflit → arbitrage via force harmonique
+                final_idx  = NOTES_LIST.index(final_note)
+                force_pure  = get_advanced_strength_global(final_idx, final_mode, chroma, bass_proxy)
+                force_modal = get_advanced_strength_global(modal_idx, modal_raw, chroma, bass_proxy)
+                if force_modal > force_pure * 1.15:
+                    final_note = modal_note
+                    final_mode = modal_raw
+
+            final_camelot = get_exact_camelot(f"{final_note} {final_mode}") or final_camelot
+
+    # --- Étape C : Anti-dissonance pour tierce mineure (±3) ---
+    try:
+        cam_val = int(final_camelot[:-1])
+        cam_let = final_camelot[-1]
+        third_pure = MODE_THIRD.get(final_mode, 4)
+        third_idx  = (NOTES_LIST.index(final_note) + third_pure) % 12
+        if chroma[third_idx] < 0.5:
+            fallback_family = MODAL_TO_CAMELOT_TYPE.get(final_mode, 'major')
+            final_mode = 'major' if fallback_family == 'major' else 'minor'
+            final_camelot = get_exact_camelot(f"{final_note} {final_mode}") or final_camelot
+    except Exception:
+        pass
+
+    # --- Étape D : Validation finale (instabilité / power_ratio) ---
+    if analysis_data.get('is_unstable') or analysis_data.get('power_ratio', 0) > 1.25:
+        dom_pct = analysis_data.get('dominant_percentage', 0)
+        key_pct = analysis_data.get('key_presence', 0)
+        if dom_pct > key_pct * 1.2:
+            dom_parts  = dom_key.split()
+            final_note = dom_parts[0]
+            final_mode = dom_parts[1] if len(dom_parts) > 1 else 'major'
+            final_camelot = analysis_data.get('dominant_camelot', final_camelot)
+
+    final_tonality = f"{final_note} {final_mode}"
+    return {
+        "final_key":    final_tonality,
+        "final_camelot": final_camelot,
+        "final_conf":   max(analysis_data.get('conf', 0), modal_conf),
+    }
 
 
 def get_chord_js(btn_id, key_str):
@@ -1030,31 +1145,28 @@ def get_mix_suggestions_text(cp):
 
 
 def get_mix_suggestions(current_camelot):
-    """
-    Calcule les transitions parfaites à partir de la tonalité unique.
-    current_camelot : ex '8A'
-    """
+    """Calcule les sauts de tierce mineure et majeure."""
     try:
-        # Extraction du chiffre (val) et de la lettre (A/B)
+        # Extraction du chiffre et de la lettre (ex: 8A -> 8, A)
         val = int(''.join(filter(str.isdigit, current_camelot)))
         letter = ''.join(filter(str.isalpha, current_camelot))
         
-        # --- TIERCE MINEURE (Saut d'énergie) ---
-        # C'est le mix que vous visez : mathématiquement +3 ou -3 positions
+        # --- TIERCE MINEURE (Ton style actuel) ---
         plus_3 = f"{(val + 3 - 1) % 12 + 1}{letter}"
         minus_3 = f"{(val - 3 - 1) % 12 + 1}{letter}"
         
         # --- TIERCE MAJEURE (Le "Spark Jump") ---
+        # Le saut de +4 positions sur la roue
         plus_4 = f"{(val + 4 - 1) % 12 + 1}{letter}"
         
-        # --- MIX RELATIF (Passage Majeur <-> Mineur) ---
-        relatif = f"{(val - 3 - 1) % 12 + 1}{'A' if letter == 'B' else 'B'}"
+        # --- MIX RELATIF SPÉCIAL (ex: 5B -> 2A) ---
+        special = f"{(val - 3 - 1) % 12 + 1}{'A' if letter == 'B' else 'B'}"
         
         return {
             "Tierce Mineure (+3)": plus_3,
             "Tierce Mineure (-3)": minus_3,
             "Tierce Majeure (+4)": plus_4,
-            "Pont Relatif": relatif
+            "Pont Relatif": special
         }
     except:
         return None
@@ -1114,25 +1226,26 @@ if uploaded_files:
                 st.markdown(f"""
                     <div class="report-card" style="background:{analysis_data['color_bandeau']};">
                         <p style="letter-spacing:5px; opacity:0.8; font-size:0.7em; margin-bottom:0px;">
-                            SNIPER ENGINE v7.0 — MODAL | {analysis_data['avis_expert']}
+                            SNIPER ENGINE v6.1 — MODAL | {analysis_data['avis_expert']}
                         </p>
                         <h1 style="font-size:5em; margin:0px 0; font-weight:900; line-height:1; text-align: center;">
-                            {analysis_data['pure_camelot']}
+                            {analysis_data.get('final_camelot', analysis_data['pure_camelot'])}
                         </h1>
                         <p style="font-size:2em; font-weight:bold; margin-top:-10px; margin-bottom:20px; opacity:0.9; text-align: center;">
-                            {analysis_data['confiance_pure'].upper()}
+                            {analysis_data.get('final_key', analysis_data['confiance_pure']).upper()}
                         </p>
                         <hr style="border:0; border-top:1px solid rgba(255,255,255,0.2); width:50%; margin: 20px auto;">
                         <div style="display: flex; justify-content: space-around; font-family: 'JetBrains Mono', monospace; font-size: 0.85em; opacity: 0.85; flex-wrap: wrap; gap: 8px;">
                             <div>🎯 CONSONANCE :&nbsp;<b>{analysis_data['key'].upper()} ({analysis_data['camelot']})</b>&nbsp;({analysis_data.get('key_presence', 0)}%&nbsp;|&nbsp;{analysis_data['conf']}%)</div>
                             <div>📊 DOMINANTE :&nbsp;<b>{analysis_data['dominant_key'].upper()}</b>&nbsp;({analysis_data['dominant_camelot']}&nbsp;|&nbsp;{analysis_data['dominant_percentage']}%&nbsp;|&nbsp;{analysis_data['dominant_conf']}%)</div>
+                            <div>🔒 PURE :&nbsp;<b>{analysis_data['confiance_pure'].upper()} ({analysis_data['pure_camelot']})</b></div>
                         </div>
                         {mod_alert}
                     </div>
                 """, unsafe_allow_html=True)
 
                 # --- SNIPER MIX SUGGESTIONS ---
-                camelot_pure = analysis_data.get('pure_camelot', '')
+                camelot_pure = analysis_data.get('final_camelot', analysis_data.get('pure_camelot', ''))
                 suggestions = get_mix_suggestions(camelot_pure)
                 if suggestions:
                     st.markdown("### 🚀 Sniper Mix Suggestions")
