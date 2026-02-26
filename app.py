@@ -791,24 +791,27 @@ def process_audio(audio_file, file_name, progress_placeholder):
                 arb_dist_mode  = arb_result["dist_mode"]
                 arb_type       = arb_result.get("type", "SPECTRAL")
 
-        # 🎯 PRIORITÉ @ : VERROUILLAGE STATISTIQUE (Consonance == Dominante)
-        # Si les deux moteurs sont d'accord avec une confiance et présence décente
-        if final_key == dominant_key and final_conf >= 70 and final_percentage >= 30:
+        # ══════════════════════════════════════════════════════════════════════════
+        # --- MOTEUR DE DÉCISION — FUSION DES 4 ÉLÉMENTS (v7.0) ---
+        # Compare Consonance (final_key) et Dominante (dominant_key) en utilisant
+        # le spectre des basses et la présence temporelle pour extraire la
+        # confiance_pure (la réponse unique).
+        # ══════════════════════════════════════════════════════════════════════════
+
+        # Cas idéal : Les deux moteurs sont d'accord avec une confiance suffisante
+        if final_key == dominant_key and final_conf >= 70:
             confiance_pure_key = final_key
             avis_expert = "💎 VERROUILLAGE STATISTIQUE"
             color_bandeau = "linear-gradient(135deg, #10b981, #059669)"  # Vert Émeraude
 
-        # ⚡ PRIORITÉ 0 : LA FORCE SUPRÊME (Power Score juge suprême)
-        # Déclenché si la dominante écrase la consonance (ratio > 1.25)
-        # OU si ce sont des voisins et que la dominante est plus solide (ratio > 1.10)
-        elif power_ratio > 1.25 or (decision_pivot and power_ratio > 1.10):
+        # La dominante est statistiquement beaucoup plus forte (ratio > 1.25)
+        elif power_ratio > 1.25:
             confiance_pure_key = dominant_key
             avis_expert = f"⚡ FORCE SUPRÊME ({round(dominant_percentage, 1)}%)"
             color_bandeau = "linear-gradient(135deg, #7c3aed, #4c1d95)"  # Violet Puissance
 
-        # ⚖️ PRIORITÉ 1 : ARBITRAGE HARMONIQUE (Duel de voisinage — affichage systématique)
-        # Déclenché dès qu'un duel spectral a eu lieu sur le Camelot Wheel.
-        # Le type de voisinage détermine le libellé affiché dans le bandeau.
+        # Arbitrage chirurgical basé sur les Sub-Basses (40-100Hz)
+        # Le "Mode détecté" et la "Tonique" agissent comme juges
         elif decision_pivot is not None:
             confiance_pure_key = decision_pivot
             if arb_type == "BASS_DOMINANCE":
@@ -819,34 +822,14 @@ def process_audio(audio_file, file_name, progress_placeholder):
                 type_duel = "VOISIN DIAGONAL"
             else:
                 type_duel = "VOISIN PROCHE"
-            avis_expert   = f"⚖️ ARBITRAGE : {type_duel}"
+            avis_expert   = f"⚖️ ARBITRAGE HARMONIQUE : {type_duel}"
             color_bandeau = "linear-gradient(135deg, #0369a1, #0c4a6e)"  # Bleu Océan
 
-        # 🏁 PRIORITÉ 2 : MODULATION DYNAMIQUE (Proportionnelle)
-        elif (mod_detected and ends_in_target and target_percentage >= 25.0
-              and modulation_time is not None and modulation_time <= dynamic_threshold):
-            confiance_pure_key = target_key
-            avis_expert = f"🏁 MODULATION VALIDÉE ({round(modulation_time)}s / {round(total_duration)}s)"
-            color_bandeau = "linear-gradient(135deg, #4338ca, #1e1b4b)"  # Violet
-
-        # 💎 PRIORITÉ 3 : ACCORD PARFAIT (Consonance = Dominante, confiance ≥ 85%)
-        elif final_key == dominant_key and final_conf >= 85:
-            confiance_pure_key = final_key
-            avis_expert = "💎 ACCORD PARFAIT"
-            color_bandeau = "linear-gradient(135deg, #059669, #064e3b)"  # Vert Émeraude
-
-        # ✅ FALLBACK : ANALYSE STABLE (Avec Test de Légitimité Power Score)
+        # Fallback sur la consonance stable
         else:
-            # On compare les forces brutes (Confiance × √Présence)
-            # Si la Dominante est 15% plus puissante, elle détrône la Consonance
-            if dom_power > (final_power * 1.2):
-                confiance_pure_key = dominant_key
-                avis_expert = f"✅ STABILITÉ DOMINANTE ({round(dominant_percentage, 1)}%)"
-                color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"  # Vert
-            else:
-                confiance_pure_key = final_key
-                avis_expert = "✅ ANALYSE STABLE"
-                color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"  # Vert
+            confiance_pure_key = final_key
+            avis_expert = "✅ ANALYSE STABLE"
+            color_bandeau = "linear-gradient(135deg, #065f46, #064e3b)"  # Vert
 
         # ══════════════════════════════════════════════════════════════════════════
 
@@ -1047,28 +1030,31 @@ def get_mix_suggestions_text(cp):
 
 
 def get_mix_suggestions(current_camelot):
-    """Calcule les sauts de tierce mineure et majeure."""
+    """
+    Calcule les transitions parfaites à partir de la tonalité unique.
+    current_camelot : ex '8A'
+    """
     try:
-        # Extraction du chiffre et de la lettre (ex: 8A -> 8, A)
+        # Extraction du chiffre (val) et de la lettre (A/B)
         val = int(''.join(filter(str.isdigit, current_camelot)))
         letter = ''.join(filter(str.isalpha, current_camelot))
         
-        # --- TIERCE MINEURE (Ton style actuel) ---
+        # --- TIERCE MINEURE (Saut d'énergie) ---
+        # C'est le mix que vous visez : mathématiquement +3 ou -3 positions
         plus_3 = f"{(val + 3 - 1) % 12 + 1}{letter}"
         minus_3 = f"{(val - 3 - 1) % 12 + 1}{letter}"
         
         # --- TIERCE MAJEURE (Le "Spark Jump") ---
-        # Le saut de +4 positions sur la roue
         plus_4 = f"{(val + 4 - 1) % 12 + 1}{letter}"
         
-        # --- MIX RELATIF SPÉCIAL (ex: 5B -> 2A) ---
-        special = f"{(val - 3 - 1) % 12 + 1}{'A' if letter == 'B' else 'B'}"
+        # --- MIX RELATIF (Passage Majeur <-> Mineur) ---
+        relatif = f"{(val - 3 - 1) % 12 + 1}{'A' if letter == 'B' else 'B'}"
         
         return {
             "Tierce Mineure (+3)": plus_3,
             "Tierce Mineure (-3)": minus_3,
             "Tierce Majeure (+4)": plus_4,
-            "Pont Relatif": special
+            "Pont Relatif": relatif
         }
     except:
         return None
@@ -1128,7 +1114,7 @@ if uploaded_files:
                 st.markdown(f"""
                     <div class="report-card" style="background:{analysis_data['color_bandeau']};">
                         <p style="letter-spacing:5px; opacity:0.8; font-size:0.7em; margin-bottom:0px;">
-                            SNIPER ENGINE v6.1 — MODAL | {analysis_data['avis_expert']}
+                            SNIPER ENGINE v7.0 — MODAL | {analysis_data['avis_expert']}
                         </p>
                         <h1 style="font-size:5em; margin:0px 0; font-weight:900; line-height:1; text-align: center;">
                             {analysis_data['pure_camelot']}
