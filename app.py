@@ -173,6 +173,21 @@ st.markdown("""
 
 # --- MOTEURS DE CALCUL ---
 
+def verifier_purete_quinte(chroma_vector, tonic_index):
+    """
+    Anti-Confusion Quinte — vérifie que la quinte ne domine pas la tonique.
+    Si la quinte est > 1.5× la tonique, il y a risque de pollution harmonique.
+    Retourne True si la quinte est propre, False si elle est polluante.
+    """
+    fifth_index = (tonic_index + 7) % 12
+    tonic_energy = chroma_vector[tonic_index]
+    fifth_energy  = chroma_vector[fifth_index]
+    # Ratio de pureté : la quinte ne doit pas "écraser" la tonique
+    if fifth_energy > (tonic_energy * 1.5):
+        return False  # Risque de pollution / Dissonance
+    return True  # Quinte propre
+
+
 def arbitrage_expert_universel(chroma, bass_vec, key_cons, key_dom, cam_map, y_harm=None, sr=None):
     """
     Arbitrage Expert Universel v14.0 — "The Bass & Dissonance Guard + Sub-Bass Priority"
@@ -850,6 +865,22 @@ def process_audio(audio_file, file_name, progress_placeholder):
 
         # ══════════════════════════════════════════════════════════════════════════
 
+        # --- INSERTION ANTI-CONFUSION QUINTE ---
+        # On récupère l'index de la note détectée (0-11)
+        pure_key = confiance_pure_key  # alias lisible
+        idx_detecte = NOTES_LIST.index(pure_key.split()[0])
+        # On vérifie si la quinte est dominante (ce qui fausserait la tierce mineure)
+        quinte_est_pure = verifier_purete_quinte(chroma_avg, idx_detecte)
+        if not quinte_est_pure:
+            # Si la quinte pollue, on signale l'anomalie dans l'avis expert
+            avis_expert = "⚠️ POLLUTION QUINTE DÉTECTÉE"
+            # Si la dominante est un voisin stable, on lui fait confiance
+            if dominant_key != confiance_pure_key and dominant_conf >= 70:
+                confiance_pure_key = dominant_key
+                color_bandeau = "linear-gradient(135deg, #b45309, #78350f)"  # Ambre/Orange
+        # Statut quinte pour l'affichage diagnostic
+        quinte_status = "✅ Pure" if quinte_est_pure else "❌ Polluée"
+
         res_obj = {
             "key": final_key, "camelot": get_exact_camelot(final_key),
             "conf": min(int(raw_final_conf), 100),  # Plafond uniquement pour l'esthétique
@@ -882,6 +913,8 @@ def process_audio(audio_file, file_name, progress_placeholder):
             # --- INDICE DE STABILITÉ ---
             "stability_score": round(stability_index, 1),
             "is_unstable": is_unstable,
+            # --- ANTI-CONFUSION QUINTE ---
+            "quinte_status": quinte_status,
         }
 
         # --- RAPPORT TELEGRAM ENRICHI (RADAR + TIMELINE) ---
@@ -1327,7 +1360,7 @@ if uploaded_files:
                 )
 
                 # --- POWER SCORES (debug & transparence) ---
-                ps1, ps2, ps3 = st.columns(3)
+                ps1, ps2, ps3, ps4 = st.columns(4)
                 with ps1:
                     st.markdown(f"<div class='metric-box'><b>💪 FORCE CONSONANCE</b><br><span style='font-size:1.6em; color:#a78bfa;'>{analysis_data.get('final_power', '—')}</span></div>", unsafe_allow_html=True)
                 with ps2:
@@ -1336,6 +1369,10 @@ if uploaded_files:
                     ratio_val = analysis_data.get('power_ratio', 0)
                     ratio_color = "#ef4444" if ratio_val > 1.25 else "#f59e0b" if ratio_val > 1.10 else "#10b981"
                     st.markdown(f"<div class='metric-box'><b>📊 RATIO DE PUISSANCE</b><br><span style='font-size:1.6em; color:{ratio_color};'>{ratio_val}</span></div>", unsafe_allow_html=True)
+                with ps4:
+                    qs = analysis_data.get('quinte_status', '—')
+                    qs_color = "#10b981" if "Pure" in qs else "#ef4444"
+                    st.markdown(f"<div class='metric-box'><b>🎵 QUINTE</b><br><span style='font-size:1.6em; color:{qs_color};'>{qs}</span></div>", unsafe_allow_html=True)
 
                 c1, c2 = st.columns([2, 1])
                 with c1:
