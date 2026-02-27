@@ -627,7 +627,11 @@ def process_audio(audio_file, file_name, progress_placeholder):
 
         update_prog(50, "Analyse du spectre harmonique")
         step, timeline, votes = 6, [], Counter()
-        segments = range(0, int(duration_harm) - step, 2)
+        limit = int(duration_harm) - step
+        if limit <= 0:
+            segments = [0]  # Force l'analyse d'au moins un bloc au début
+        else:
+            segments = range(0, limit, 2)
 
         for i, start in enumerate(segments):
             idx_start, idx_end = int(start * sr), int((start + step) * sr)
@@ -953,28 +957,27 @@ def process_audio(audio_file, file_name, progress_placeholder):
                 # Timeline avec axe Y en notation Camelot
                 CAMELOT_ORDER_TG = [f"{i}{m}" for i in range(1, 13) for m in ['A', 'B']]
                 df_tl = pd.DataFrame(res_obj['timeline'])
-                fig_tl = px.line(
-                    df_tl,
-                    x="Temps",
-                    y="Camelot",
-                    markers=True,
-                    template="plotly_dark",
-                    category_orders={"Camelot": CAMELOT_ORDER_TG},
-                    hover_data={"Note": True, "Temps": ":.2f"},
-                    title="ÉVOLUTION TEMPORELLE (Camelot)"
-                )
-                timeline_bytes = fig_tl.to_image(format="png", width=1000, height=450)
 
-                media_group = [
-                    {'type': 'photo', 'media': 'attach://radar.png', 'caption': caption, 'parse_mode': 'Markdown'},
-                    {'type': 'photo', 'media': 'attach://timeline.png'}
-                ]
-
-                files = {
-                    'radar.png': radar_bytes,
-                    'timeline.png': timeline_bytes
-                }
-
+                media_group = []
+                files = {}
+                # Radar (toujours présent si l'analyse globale a fonctionné)
+                media_group.append({'type': 'photo', 'media': 'attach://radar.png', 'caption': caption, 'parse_mode': 'Markdown'})
+                files['radar.png'] = radar_bytes
+                # Sécurité Timeline : On ne l'ajoute que si on a des segments
+                if not df_tl.empty:
+                    fig_tl = px.line(
+                        df_tl,
+                        x="Temps",
+                        y="Camelot",
+                        markers=True,
+                        template="plotly_dark",
+                        category_orders={"Camelot": CAMELOT_ORDER_TG},
+                        hover_data={"Note": True, "Temps": ":.2f"},
+                        title="ÉVOLUTION TEMPORELLE (Camelot)"
+                    )
+                    timeline_bytes = fig_tl.to_image(format="png", width=1000, height=450)
+                    media_group.append({'type': 'photo', 'media': 'attach://timeline.png'})
+                    files['timeline.png'] = timeline_bytes
                 requests.post(
                     f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMediaGroup",
                     data={'chat_id': CHAT_ID, 'media': json.dumps(media_group)},
