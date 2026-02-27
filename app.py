@@ -173,7 +173,7 @@ st.markdown("""
 
 # --- MOTEURS DE CALCUL ---
 
-def arbitrage_expert_universel(chroma, bass_vec, key_cons, key_dom, cam_map, y_harm=None, sr=None):
+def arbitrage_expert_universel(chroma, bass_vec, key_cons, key_dom, cam_map, y_harm=None, sr=None, tuning=0.0):
     """
     Arbitrage Expert Universel v14.0 — "The Bass & Dissonance Guard + Sub-Bass Priority"
 
@@ -261,7 +261,7 @@ def arbitrage_expert_universel(chroma, bass_vec, key_cons, key_dom, cam_map, y_h
         # Si la sub-basse de la Dominante dépasse celle de la Consonance de 20%+,
         # la Dominante est déclarée gagnante directement (BASS_DOMINANCE).
         if y_harm is not None and sr is not None:
-            sub_vec = get_sub_bass_priority(y_harm, sr)
+            sub_vec = get_sub_bass_priority(y_harm, sr, tuning=tuning)
             if sub_vec[idx_d] > sub_vec[idx_c] * 1.2:
                 return {"key": key_dom, "duel_actif": True, "dist_num": dist_num, "dist_mode": dist_mode, "type": "BASS_DOMINANCE"}
 
@@ -285,14 +285,14 @@ def apply_sniper_filters(y, sr):
     b, a = butter(4, [80/nyq, 5000/nyq], btype='band')
     return lfilter(b, a, y_harm)
 
-def get_bass_priority(y, sr):
+def get_bass_priority(y, sr, tuning=0.0):
     nyq = 0.5 * sr
     b, a = butter(2, 150/nyq, btype='low')
     y_bass = lfilter(b, a, y)
-    chroma_bass = librosa.feature.chroma_cqt(y=y_bass, sr=sr, n_chroma=12)
+    chroma_bass = librosa.feature.chroma_cqt(y=y_bass, sr=sr, n_chroma=12, tuning=tuning)
     return np.mean(chroma_bass, axis=1)
 
-def get_sub_bass_priority(y, sr):
+def get_sub_bass_priority(y, sr, tuning=0.0):
     """
     Analyse Sub-Bass chirurgicale (40Hz–100Hz) — Étape A.
     Filtre plus serré que get_bass_priority (150Hz) pour isoler
@@ -302,10 +302,10 @@ def get_sub_bass_priority(y, sr):
     # Filtre plus serré pour le Sub-Bass (40Hz à 100Hz)
     b, a = butter(2, [40/nyq, 100/nyq], btype='band')
     y_sub = lfilter(b, a, y)
-    chroma_sub = librosa.feature.chroma_cqt(y=y_sub, sr=sr, n_chroma=12)
+    chroma_sub = librosa.feature.chroma_cqt(y=y_sub, sr=sr, n_chroma=12, tuning=tuning)
     return np.mean(chroma_sub, axis=1)
 
-def detect_harmonic_sections(y, sr, duration, step=6, min_harm_duration=20, harm_threshold=0.3, perc_threshold=0.5):
+def detect_harmonic_sections(y, sr, duration, step=6, min_harm_duration=20, harm_threshold=0.3, perc_threshold=0.5, tuning=0.0):
     """
     Détecte les sections harmoniques en ignorant les intros/outros avec seulement kicks ou voix parlée.
 
@@ -315,7 +315,7 @@ def detect_harmonic_sections(y, sr, duration, step=6, min_harm_duration=20, harm
     """
     hop_length = 512  # FIX : valeur fixe et cohérente avec librosa par défaut
 
-    chroma_full = librosa.feature.chroma_cqt(y=y, sr=sr, n_chroma=12, hop_length=hop_length)
+    chroma_full = librosa.feature.chroma_cqt(y=y, sr=sr, n_chroma=12, hop_length=hop_length, tuning=tuning)
     flatness = librosa.feature.spectral_flatness(y=y, hop_length=hop_length)
 
     harmonic_starts = []
@@ -605,7 +605,9 @@ def process_audio(audio_file, file_name, progress_placeholder):
 
         update_prog(20, "Détection des sections harmoniques")
         duration = librosa.get_duration(y=y, sr=sr)
-        harm_start, harm_end = detect_harmonic_sections(y, sr, duration)
+        # 1. Estimer le décalage d'accordage (tuning) dès le début sur le signal complet
+        tuning = librosa.estimate_tuning(y=y, sr=sr)
+        harm_start, harm_end = detect_harmonic_sections(y, sr, duration, tuning=tuning)
         update_prog(30, f"Section harmonique détectée : {seconds_to_mmss(harm_start)} à {seconds_to_mmss(harm_end)}")
 
         idx_harm_start = int(harm_start * sr)
@@ -614,11 +616,14 @@ def process_audio(audio_file, file_name, progress_placeholder):
         duration_harm = harm_end - harm_start
 
         update_prog(40, "Filtrage des fréquences")
+        # 2. Affiner l'estimation du tuning sur la section harmonique (plus précis)
         tuning = librosa.estimate_tuning(y=y_harm, sr=sr)
         y_filt = apply_sniper_filters(y_harm, sr)
 
+        # 3. Utiliser ce décalage pour recaler l'analyse harmonique
+        # On passe le paramètre 'tuning' au calcul du chromagramme
         chroma_avg = np.mean(librosa.feature.chroma_cqt(y=y_filt, sr=sr, tuning=tuning), axis=1)
-        bass_global = get_bass_priority(y_harm, sr)
+        bass_global = get_bass_priority(y_harm, sr, tuning=tuning)
 
         update_prog(50, "Analyse du spectre harmonique")
         step, timeline, votes = 6, [], Counter()
@@ -631,7 +636,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
 
             c_raw = librosa.feature.chroma_cqt(y=seg, sr=sr, tuning=tuning, n_chroma=24, bins_per_octave=24)
             c_avg = np.mean((c_raw[::2, :] + c_raw[1::2, :]) / 2, axis=1)
-            b_seg = get_bass_priority(y_harm[idx_start:idx_end], sr)
+            b_seg = get_bass_priority(y_harm[idx_start:idx_end], sr, tuning=tuning)
 
             res = solve_key_sniper(c_avg, b_seg)
             res_modal = solve_key_sniper_modal(c_avg, b_seg)
@@ -782,7 +787,8 @@ def process_audio(audio_file, file_name, progress_placeholder):
                 dominant_key,
                 CAMELOT_MAP,
                 y_harm,        # Signal harmonique pour analyse sub-basse (40–100Hz)
-                sr             # Sample rate associé
+                sr,            # Sample rate associé
+                tuning=tuning  # Décalage d'accordage pour recaler l'analyse sub-basse
             )
             # Le pivot est actif si et seulement si un duel de voisinage a eu lieu
             if arb_result["duel_actif"]:
@@ -922,9 +928,6 @@ def process_audio(audio_file, file_name, progress_placeholder):
                     f"\n└ `{res_obj.get('modal_key','—').upper()} ({res_obj.get('modal_camelot','??')})`"
                 )
 
-                camelot_pure_tg = res_obj.get('pure_camelot', res_obj['camelot'])
-                suggestions_block = get_mix_suggestions_text(camelot_pure_tg)
-
                 caption = (
                     f"🎯 *RCDJ228 MUSIC SNIPER*\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
@@ -936,9 +939,6 @@ def process_audio(audio_file, file_name, progress_placeholder):
                     + pure_line
                     + modal_line
                     + f"{mod_line}\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"🔥 *PRO MIX TARGETS ({camelot_pure_tg}):*\n"
-                    f"{suggestions_block}\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
                     f"🎸 *ACCORDAGE:* `{res_obj['tuning']} Hz` ✅\n"
                     f"🛡️ *SECTION HARMONIQUE:* {res_obj['harm_start']} → {res_obj['harm_end']}"
@@ -1027,52 +1027,6 @@ def get_chord_js(btn_id, key_str):
     }};
     """
 
-def get_mix_suggestions_text(cp):
-    """Retourne les suggestions de mix formatées pour Telegram."""
-    try:
-        val = int(''.join(filter(str.isdigit, cp)))
-        let = ''.join(filter(str.isalpha, cp))
-
-        p3  = f"{(val + 3 - 1) % 12 + 1}{let}"      # Tierce Mineure +
-        m3  = f"{(val - 3 - 1) % 12 + 1}{let}"      # Tierce Mineure -
-        p4  = f"{(val + 4 - 1) % 12 + 1}{let}"      # Tierce Majeure +
-        rel = f"{(val - 3 - 1) % 12 + 1}{'A' if let == 'B' else 'B'}"  # Pont Relatif
-
-        return (f"🔹 +3 (Energy): {p3}\n"
-                f"🔹 -3 (Deep): {m3}\n"
-                f"🔸 +4 (Spark): {p4}\n"
-                f"🔄 Relatif: {rel}")
-    except:
-        return "Suggestions indisponibles"
-
-
-def get_mix_suggestions(current_camelot):
-    """Calcule les sauts de tierce mineure et majeure."""
-    try:
-        # Extraction du chiffre et de la lettre (ex: 8A -> 8, A)
-        val = int(''.join(filter(str.isdigit, current_camelot)))
-        letter = ''.join(filter(str.isalpha, current_camelot))
-        
-        # --- TIERCE MINEURE (Ton style actuel) ---
-        plus_3 = f"{(val + 3 - 1) % 12 + 1}{letter}"
-        minus_3 = f"{(val - 3 - 1) % 12 + 1}{letter}"
-        
-        # --- TIERCE MAJEURE (Le "Spark Jump") ---
-        # Le saut de +4 positions sur la roue
-        plus_4 = f"{(val + 4 - 1) % 12 + 1}{letter}"
-        
-        # --- MIX RELATIF SPÉCIAL (ex: 5B -> 2A) ---
-        special = f"{(val - 3 - 1) % 12 + 1}{'A' if letter == 'B' else 'B'}"
-        
-        return {
-            "Tierce Mineure (+3)": plus_3,
-            "Tierce Mineure (-3)": minus_3,
-            "Tierce Majeure (+4)": plus_4,
-            "Pont Relatif": special
-        }
-    except:
-        return None
-
 # --- DASHBOARD PRINCIPAL ---
 st.title("🎯 RCDJ228 MUSIC SNIPER")
 st.markdown("#### Système d'Analyse Harmonique Modale — 7 Modes Grecs × 12 Toniques")
@@ -1144,37 +1098,6 @@ if uploaded_files:
                         {mod_alert}
                     </div>
                 """, unsafe_allow_html=True)
-
-                # --- SNIPER MIX SUGGESTIONS ---
-                camelot_pure = analysis_data.get('pure_camelot', '')
-                suggestions = get_mix_suggestions(camelot_pure)
-                if suggestions:
-                    st.markdown("### 🚀 Sniper Mix Suggestions")
-                    cols = st.columns(4)
-                    
-                    titles = list(suggestions.keys())
-                    values = list(suggestions.values())
-                    
-                    # Couleurs : Bleu (Mineur), Orange (Majeur), Violet (Spécial)
-                    colors = ["#1E90FF", "#1E90FF", "#FF8C00", "#A855F7"] 
-                    
-                    for i in range(4):
-                        with cols[i]:
-                            st.markdown(
-                                f"""
-                                <div style="
-                                    background-color: #1a1c24; 
-                                    padding: 12px; 
-                                    border-radius: 8px; 
-                                    border-top: 4px solid {colors[i]};
-                                    text-align: center;
-                                    box-shadow: 0px 4px 6px rgba(0,0,0,0.2);">
-                                    <p style="margin:0; font-size: 0.75rem; color: #94a3b8; font-weight: bold;">{titles[i]}</p>
-                                    <h2 style="margin:5px 0; color: white; font-family: sans-serif;">{values[i]}</h2>
-                                </div>
-                                """, 
-                                unsafe_allow_html=True
-                            )
 
                 if analysis_data.get('is_unstable'):
                     stability_val = analysis_data.get('stability_score', 0)
