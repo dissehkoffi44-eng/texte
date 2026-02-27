@@ -29,7 +29,7 @@ CHAT_ID = st.secrets.get("CHAT_ID")
 
 # --- RÉFÉRENTIELS HARMONIQUES ---
 NOTES_LIST = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-MODAL_MODES = ['ionian', 'major', 'lydian', 'mixolydian', 'dorian', 'aeolian', 'minor', 'phrygian', 'locrian']
+MODAL_MODES = ['major', 'minor']
 NOTES_ORDER = [f"{n} {m}" for n in NOTES_LIST for m in MODAL_MODES]
 
 CAMELOT_MAP = {
@@ -40,93 +40,45 @@ CAMELOT_MAP = {
 }
 
 # --- TABLEAU CAMELOT ÉTENDU POUR TOUS LES MODES (CORRECTION DES APPROXIMATIONS) ---
-# Basé sur le tableau fourni, avec mapping exact pour chaque mode et tonic.
-# Utilise # pour dièses et b pour bémols (enharmoniques séparés par /).
-CAMELOT_TABLE = {
-    1: {'aeolian': 'G#/Ab', 'dorian': 'C#/Db', 'phrygian': 'D#/Eb', 'locrian': 'A#/Bb', 'ionian': 'B', 'lydian': 'E', 'mixolydian': 'F#/Gb'},
-    2: {'aeolian': 'D#/Eb', 'dorian': 'G#/Ab', 'phrygian': 'A#/Bb', 'locrian': 'F', 'ionian': 'F#/Gb', 'lydian': 'B', 'mixolydian': 'C#/Db'},
-    3: {'aeolian': 'Bb/A#', 'dorian': 'Eb/D#', 'phrygian': 'F', 'locrian': 'C', 'ionian': 'Db/C#', 'lydian': 'Gb/F#', 'mixolydian': 'Ab/G#'},
-    4: {'aeolian': 'F', 'dorian': 'Bb/A#', 'phrygian': 'C', 'locrian': 'G', 'ionian': 'Ab/G#', 'lydian': 'Db/C#', 'mixolydian': 'Eb/D#'},
-    5: {'aeolian': 'C', 'dorian': 'F', 'phrygian': 'G', 'locrian': 'D', 'ionian': 'Eb/D#', 'lydian': 'Ab/G#', 'mixolydian': 'Bb/A#'},
-    6: {'aeolian': 'G', 'dorian': 'C', 'phrygian': 'D', 'locrian': 'A', 'ionian': 'Bb/A#', 'lydian': 'Eb/D#', 'mixolydian': 'F'},
-    7: {'aeolian': 'D', 'dorian': 'G', 'phrygian': 'A', 'locrian': 'E', 'ionian': 'F', 'lydian': 'Bb/A#', 'mixolydian': 'C'},
-    8: {'aeolian': 'A', 'dorian': 'D', 'phrygian': 'E', 'locrian': 'B', 'ionian': 'C', 'lydian': 'F', 'mixolydian': 'G'},
-    9: {'aeolian': 'E', 'dorian': 'A', 'phrygian': 'B', 'locrian': 'F#/Gb', 'ionian': 'G', 'lydian': 'C', 'mixolydian': 'D'},
-    10: {'aeolian': 'B', 'dorian': 'E', 'phrygian': 'F#/Gb', 'locrian': 'C#/Db', 'ionian': 'D', 'lydian': 'G', 'mixolydian': 'A'},
-    11: {'aeolian': 'F#/Gb', 'dorian': 'B', 'phrygian': 'C#/Db', 'locrian': 'G#/Ab', 'ionian': 'A', 'lydian': 'D', 'mixolydian': 'E'},
-    12: {'aeolian': 'C#/Db', 'dorian': 'F#/Gb', 'phrygian': 'G#/Ab', 'locrian': 'D#/Eb', 'ionian': 'E', 'lydian': 'A', 'mixolydian': 'B'},
-}
+# Version simplifiée Majeur/Mineur uniquement — délègue directement à CAMELOT_MAP
 
-# --- PROFILS DE RÉFÉRENCE MODAUX COMPLETS ---
-# Chaque modèle psychoacoustique est étendu aux 7 modes grecs.
-# Les profils Dorian/Phrygien/Lydien/Mixolydien/Locrien sont dérivés des
-# profils Krumhansl/Temperley/Bellman par rotation et ajustement des degrés caractéristiques.
+# --- PROFILS DE RÉFÉRENCE MAJEUR/MINEUR ---
 PROFILES = {
     "krumhansl": {
-        "ionian":     [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88],
-        "aeolian":    [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17],
-        "dorian":     [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.74, 4.75, 3.98, 4.02, 3.34, 3.17],
-        "phrygian":   [6.33, 5.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17],
-        "lydian":     [6.35, 2.23, 3.48, 2.33, 5.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88],
-        "mixolydian": [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 5.29, 2.88],
-        "locrian":    [6.33, 5.68, 3.52, 5.38, 2.60, 3.53, 1.54, 1.75, 3.98, 2.69, 3.34, 3.17],
-        # Alias classiques maintenus pour rétrocompatibilité
         "major": [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88],
         "minor": [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17],
     },
     "temperley": {
-        "ionian":     [5.0, 2.0, 3.5, 2.0, 4.5, 4.0, 2.0, 4.5, 2.0, 3.5, 1.5, 4.0],
-        "aeolian":    [5.0, 2.0, 3.5, 4.5, 2.0, 4.0, 2.0, 4.5, 3.5, 2.0, 1.5, 4.0],
-        "dorian":     [5.0, 2.0, 3.5, 4.5, 2.0, 4.0, 2.5, 4.5, 3.5, 3.5, 1.5, 4.0],
-        "phrygian":   [5.0, 4.5, 3.5, 4.5, 2.0, 4.0, 2.0, 4.5, 3.5, 2.0, 1.5, 4.0],
-        "lydian":     [5.0, 2.0, 3.5, 2.0, 4.5, 4.0, 4.5, 4.5, 2.0, 3.5, 1.5, 4.0],
-        "mixolydian": [5.0, 2.0, 3.5, 2.0, 4.5, 4.0, 2.0, 4.5, 2.0, 3.5, 4.0, 4.0],
-        "locrian":    [5.0, 4.5, 3.5, 4.5, 2.0, 4.0, 2.0, 2.0, 3.5, 2.0, 1.5, 4.0],
         "major": [5.0, 2.0, 3.5, 2.0, 4.5, 4.0, 2.0, 4.5, 2.0, 3.5, 1.5, 4.0],
         "minor": [5.0, 2.0, 3.5, 4.5, 2.0, 4.0, 2.0, 4.5, 3.5, 2.0, 1.5, 4.0],
     },
     "bellman": {
-        "ionian":     [16.8, 0.86, 12.95, 1.41, 13.49, 11.93, 1.25, 16.74, 1.56, 12.81, 1.89, 12.44],
-        "aeolian":    [18.16, 0.69, 12.99, 13.34, 1.07, 11.15, 1.38, 17.2, 13.62, 1.27, 12.79, 2.4],
-        "dorian":     [18.16, 0.69, 12.99, 13.34, 1.07, 11.15, 1.88, 17.2, 13.62, 12.81, 1.89, 2.4],
-        "phrygian":   [18.16, 13.69, 12.99, 13.34, 1.07, 11.15, 1.38, 17.2, 13.62, 1.27, 1.89, 2.4],
-        "lydian":     [16.8, 0.86, 12.95, 1.41, 13.49, 11.93, 13.25, 16.74, 1.56, 12.81, 1.89, 12.44],
-        "mixolydian": [16.8, 0.86, 12.95, 1.41, 13.49, 11.93, 1.25, 16.74, 1.56, 12.81, 12.89, 12.44],
-        "locrian":    [18.16, 13.69, 12.99, 13.34, 1.07, 11.15, 1.38, 2.2, 13.62, 1.27, 1.89, 2.4],
         "major": [16.8, 0.86, 12.95, 1.41, 13.49, 11.93, 1.25, 16.74, 1.56, 12.81, 1.89, 12.44],
         "minor": [18.16, 0.69, 12.99, 13.34, 1.07, 11.15, 1.38, 17.2, 13.62, 1.27, 12.79, 2.4],
     }
 }
 
-# --- MAPPING MODE GREC → FAMILLE CAMELOT ---
-# Utilisé par get_safe_camelot() pour projeter tout mode vers A (mineur) ou B (majeur)
+# --- MAPPING MODE → FAMILLE CAMELOT (simplifié Majeur/Mineur) ---
 MODAL_TO_CAMELOT_TYPE = {
-    'ionian':     'major',
-    'lydian':     'major',
-    'mixolydian': 'major',
-    'major':      'major',
-    'aeolian':    'minor',
-    'dorian':     'minor',
-    'phrygian':   'minor',
-    'locrian':    'minor',
-    'minor':      'minor',
+    'major': 'major',
+    'minor': 'minor',
 }
 
-# Liste complète des modes actifs (utilisée dans les boucles)
-ALL_MODES = ['ionian', 'aeolian', 'dorian', 'phrygian', 'lydian', 'mixolydian', 'locrian']
+# Liste des modes actifs (Majeur/Mineur uniquement)
+ALL_MODES = ['major', 'minor']
 
-# Tierce caractéristique par famille de mode (majeure +4 / mineure +3)
+# Tierce caractéristique (majeure +4 / mineure +3)
 MODE_THIRD = {
-    'ionian': 4, 'lydian': 4, 'mixolydian': 4, 'major': 4,
-    'aeolian': 3, 'dorian': 3, 'phrygian': 3, 'locrian': 3, 'minor': 3,
+    'major': 4,
+    'minor': 3,
 }
 
-# --- PRÉCOMPUTATION DES PROFILS ROULÉS (tous modes) ---
-# 3 modèles × 9 modes × 12 toniques = 324 tableaux précalculés au démarrage
+# --- PRÉCOMPUTATION DES PROFILS ROULÉS (Majeur/Mineur) ---
+# 3 modèles × 2 modes × 12 toniques = 72 tableaux précalculés au démarrage
 PROFILES_ROLLED = {
     p_name: {
         mode: [np.roll(PROFILES[p_name][mode], i) for i in range(12)]
-        for mode in ALL_MODES + ['major', 'minor']  # inclut alias classiques
+        for mode in ALL_MODES
     }
     for p_name in PROFILES
 }
@@ -357,16 +309,15 @@ def detect_harmonic_sections(y, sr, duration, step=6, min_harm_duration=20, harm
 def detect_cadence_resolution(timeline, final_key):
     """
     Détection des cadences de résolution (ex. : V-I) pour valider la tonique.
-    Compatible avec les modes grecs (ex. "A dorian", "D mixolydian").
+    Compatible avec Majeur et Mineur uniquement.
     """
     parts = final_key.split()
     note = parts[0]
-    mode = parts[1] if len(parts) > 1 else 'ionian'
+    mode = parts[1] if len(parts) > 1 else 'major'
     root_idx = NOTES_LIST.index(note)
     dom_idx = (root_idx + 7) % 12
     subdom_idx = (root_idx + 5) % 12
-    # Famille harmonique pour les comparaisons cadentielles
-    is_minor_family = MODAL_TO_CAMELOT_TYPE.get(mode, 'major') == 'minor'
+    is_minor_family = mode == 'minor'
 
     resolution_count = 0
     for i in range(1, len(timeline)):
@@ -375,10 +326,9 @@ def detect_cadence_resolution(timeline, final_key):
 
         dom_key = f"{NOTES_LIST[dom_idx]} {mode}"
         if is_minor_family:
-            if (prev_note == f"{NOTES_LIST[dom_idx]} ionian" or
-                prev_note == f"{NOTES_LIST[dom_idx]} major" or
+            if (prev_note == f"{NOTES_LIST[dom_idx]} major" or
                 prev_note == dom_key) and curr_note == final_key:
-                resolution_count += 1 if ('major' in prev_note or 'ionian' in prev_note) else 0.5
+                resolution_count += 1 if 'major' in prev_note else 0.5
         else:
             if prev_note == dom_key and curr_note == final_key:
                 resolution_count += 1
@@ -398,34 +348,14 @@ def detect_cadence_resolution(timeline, final_key):
 
 def get_exact_camelot(key_str):
     """
-    Conversion exacte vers la roue de Camelot pour tous les modes (y compris grecs).
-    Utilise le tableau étendu CAMELOT_TABLE pour éviter les approximations major/minor.
-    Gère les enharmoniques (ex. G# == Ab) et mappe 'major' → 'ionian', 'minor' → 'aeolian'.
+    Conversion simplifiée Majeur/Mineur vers Camelot.
+    Utilise directement le dictionnaire CAMELOT_MAP.
     """
     if not key_str or "Unknown" in key_str:
         return "??"
-    parts = key_str.strip().split()
-    if len(parts) < 2:
-        return "??"
-    note = parts[0]
-    mode = parts[1].lower()
-    if mode == 'major':
-        mode = 'ionian'
-    elif mode == 'minor':
-        mode = 'aeolian'
-    # Recherche dans le tableau
-    for code in range(1, 13):
-        tonic_str = CAMELOT_TABLE[code].get(mode, '')
-        if tonic_str:
-            options = [opt.strip() for opt in tonic_str.split('/')]
-            if note in options:
-                if mode in ['aeolian', 'dorian', 'phrygian']:
-                    suffix = 'A'
-                else:
-                    suffix = 'B'
-                return f"{code}{suffix}"
-    # Fallback si non trouvé (rare)
-    return "??"
+    # Normalisation : ionian → major, aeolian → minor (rétrocompatibilité)
+    key_str = key_str.replace('ionian', 'major').replace('aeolian', 'minor')
+    return CAMELOT_MAP.get(key_str, "??")
 
 def solve_key_sniper(chroma_vector, bass_vector):
     """
@@ -456,9 +386,9 @@ def solve_key_sniper(chroma_vector, bass_vector):
                 if bv[i] > 0.6:
                     score += (bv[i] * 0.2)
 
-                # Validation de la Quinte (stable pour presque tous les modes sauf Locrian)
+                # Validation de la Quinte (stable pour le mode majeur et mineur)
                 fifth_idx = (i + 7) % 12
-                if m_name != 'locrian' and cv[fifth_idx] > 0.5:
+                if cv[fifth_idx] > 0.5:
                     score += 0.1
 
                 # Validation de la Tierce spécifique au mode
@@ -477,15 +407,7 @@ def solve_key_sniper(chroma_vector, bass_vector):
 
 def solve_key_sniper_modal(chroma_vector, bass_vector):
     """
-    Moteur de détection modale étendu — 7 Modes Grecs × 12 Toniques.
-
-    Détecte non seulement Major/Minor classiques mais aussi Dorian, Phrygien,
-    Lydien, Mixolydien et Locrien avec pondération professionnelle :
-      - Corrélation de Pearson sur le profil modal complet
-      - Boost basse (poids +0.25 si tonique dominante dans les graves)
-      - Bonus Quinte (stabilité harmonique +0.10)
-
-    Retourne : dict avec 'key' (ex. "A dorian") et 'score'.
+    Moteur de détection — Majeur / Mineur × 12 Toniques.
     """
     best_overall_score = -1
     best_res = {"key": "Unknown", "mode": "major", "score": 0}
@@ -511,15 +433,8 @@ def solve_key_sniper_modal(chroma_vector, bass_vector):
 
             if score > best_overall_score:
                 best_overall_score = score
-                # Mapping vers nom lisible (ionian→major, aeolian→minor, sinon nom grec)
-                if m_name == "ionian":
-                    mode_label = "major"
-                elif m_name == "aeolian":
-                    mode_label = "minor"
-                else:
-                    mode_label = m_name
                 best_res = {
-                    "key": f"{NOTES_LIST[i]} {mode_label}",
+                    "key": f"{NOTES_LIST[i]} {m_name}",
                     "raw_mode": m_name,
                     "score": best_overall_score
                 }
@@ -541,7 +456,7 @@ def get_key_score(key, chroma_vector, bass_vector):
     """
     parts = key.split()
     note = parts[0]
-    mode = parts[1] if len(parts) > 1 else 'ionian'
+    mode = parts[1] if len(parts) > 1 else 'major'
     root_idx = NOTES_LIST.index(note)
 
     # Normalisation des vecteurs chroma et basse
@@ -565,7 +480,7 @@ def get_key_score(key, chroma_vector, bass_vector):
         if bv_norm[root_idx] > 0.6:
             score += (bv_norm[root_idx] * 0.2)
 
-        if mode != 'locrian' and cv_norm[fifth_idx] > 0.5:
+        if cv_norm[fifth_idx] > 0.5:
             score += 0.1
         if cv_norm[third_idx] > 0.5:
             score += 0.1
@@ -672,7 +587,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
         res_modal_global = solve_key_sniper_modal(chroma_avg, bass_global)
         modal_key = res_modal_global.get('key', final_key)
         modal_camelot = get_exact_camelot(modal_key)
-        modal_raw_mode = res_modal_global.get('raw_mode', 'ionian')
+        modal_raw_mode = res_modal_global.get('raw_mode', 'major')
         modal_conf = int(res_modal_global.get('score', 0) * 100)  # Récupération de la confiance modale
         # NOUVEAU : Calcul de la présence du mode dans la timeline
         modal_count = sum(1 for t in timeline if t["Mode"] == modal_key)
@@ -917,13 +832,8 @@ def process_audio(audio_file, file_name, progress_placeholder):
                 pure_line = f"\n🔒 *TONALITÉ PURE:* `{res_obj['confiance_pure'].upper()} ({res_obj['pure_camelot']})` | *AVIS:* `{res_obj['avis_expert']}`"
                 # Mapping des couleurs vers Emojis pour Telegram
                 modal_emojis = {
-                    "ionian": "🟢 (Vert)",
-                    "aeolian": "🔵 (Bleu)",
-                    "dorian": "🟣 (Violet)",
-                    "phrygian": "🔴 (Rouge)",
-                    "lydian": "🟠 (Orange)",
-                    "mixolydian": "💎 (Cyan)",
-                    "locrian": "⚫ (Gris)"
+                    "major": "🟢 (Majeur)",
+                    "minor": "🔵 (Mineur)",
                 }
                 # Récupération de l'émoji correspondant au mode actuel
                 current_mode_emoji = modal_emojis.get(res_obj.get('modal_raw_mode'), "⚪")
@@ -1085,7 +995,7 @@ if uploaded_files:
                 st.markdown(f"""
                     <div class="report-card" style="background:{analysis_data['color_bandeau']};">
                         <p style="letter-spacing:5px; opacity:0.8; font-size:0.7em; margin-bottom:0px;">
-                            SNIPER ENGINE v6.1 — MODAL | {analysis_data['avis_expert']}
+                            SNIPER ENGINE v6.1 — BINARY | {analysis_data['avis_expert']}
                         </p>
                         <h1 style="font-size:5em; margin:0px 0; font-weight:900; line-height:1; text-align: center;">
                             {analysis_data['pure_camelot']}
@@ -1122,27 +1032,21 @@ if uploaded_files:
                         <script>{get_chord_js(btn_id, analysis_data['key'])}</script>
                     """, height=110)
 
-                # --- MODE GREC DÉTECTÉ ---
-                raw_mode = analysis_data.get('modal_raw_mode', 'ionian')
+                # --- MODE DÉTECTÉ ---
+                raw_mode = analysis_data.get('modal_raw_mode', 'major')
                 modal_colors = {
-                    "ionian": "#10b981", "aeolian": "#3b82f6",
-                    "dorian": "#8b5cf6", "phrygian": "#ef4444",
-                    "lydian": "#f59e0b", "mixolydian": "#06b6d4", "locrian": "#6b7280"
+                    "major": "#10b981",
+                    "minor": "#3b82f6",
                 }
                 modal_descriptions = {
-                    "ionian":     "Majeur classique — lumineux, stable",
-                    "aeolian":    "Mineur naturel — mélancolique, profond",
-                    "dorian":     "Mineur jazz — funky, sophistiqué",
-                    "phrygian":   "Flamenco / Metal — sombre, exotique",
-                    "lydian":     "Cinématique — rêveur, flottant",
-                    "mixolydian": "Blues / Rock — énergique, dominant",
-                    "locrian":    "Dissonant — instable, avant-gardiste",
+                    "major": "Majeur classique — lumineux, stable",
+                    "minor": "Mineur naturel — mélancolique, profond",
                 }
                 mc = modal_colors.get(raw_mode, "#6b7280")
                 md = modal_descriptions.get(raw_mode, "")
                 st.markdown(
                     f"<div class='metric-box' style='border-color:{mc}; margin-bottom:12px;'>"
-                    f"<b>🎼 MODE DÉTECTÉ</b><br>"
+                    f"<b>🎼 TONALITÉ DÉTECTÉE</b><br>"
                     f"<span style='font-size:1.8em; color:{mc}; font-weight:900;'>{analysis_data.get('modal_key','—').upper()}</span>"
                     f"&nbsp;&nbsp;<span style='font-size:1em; color:#94a3b8;'>Camelot : <b>{analysis_data.get('modal_camelot','??')}</b></span><br>"
                     f"<div style='font-size:0.9em; margin-top:5px; color:#94a3b8;'>"
