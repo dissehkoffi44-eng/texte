@@ -1163,20 +1163,22 @@ if uploaded_files:
 
                 c1, c2 = st.columns([2, 1])
                 with c1:
-                    # Préparer l'ordre des catégories pour que l'axe Y soit bien rangé (1A, 1B, 2A, 2B...)
-                    CAMELOT_ORDER = [f"{i}{m}" for i in range(1, 13) for m in ['A', 'B']]
                     df_tl = pd.DataFrame(timeline)
-                    fig_tl = px.line(
-                        df_tl,
-                        x="Temps",
-                        y="Camelot",  # Utiliser la colonne Camelot
-                        markers=True,
-                        template="plotly_dark",
-                        category_orders={"Camelot": CAMELOT_ORDER},  # Trier par roue de Camelot
-                        hover_data={"Note": True, "Temps": ":.2f"}  # Garder le nom de la note au survol
-                    )
-                    fig_tl.update_layout(height=300, margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-                    st.plotly_chart(fig_tl, use_container_width=True, key=f"timeline_{analysis_data['name']}_{i}")
+                    if not df_tl.empty: # <--- AJOUT DE CETTE SÉCURITÉ
+                        CAMELOT_ORDER = [f"{i}{m}" for i in range(1, 13) for m in ['A', 'B']]
+                        fig_tl = px.line(
+                            df_tl,
+                            x="Temps",
+                            y="Camelot",
+                            markers=True,
+                            template="plotly_dark",
+                            category_orders={"Camelot": CAMELOT_ORDER},
+                            hover_data={"Note": True, "Temps": ":.2f"}
+                        )
+                        fig_tl.update_layout(height=300, margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                        st.plotly_chart(fig_tl, use_container_width=True, key=f"timeline_{analysis_data['name']}_{i}")
+                    else:
+                        st.warning("⚠️ Pas assez de données harmoniques pour générer la timeline.")
                 with c2:
                     # Créer une liste de labels Camelot pour le radar (basée sur le mode majeur par défaut)
                     CAMELOT_LABELS = [get_exact_camelot(f"{n} major") for n in NOTES_LIST]
