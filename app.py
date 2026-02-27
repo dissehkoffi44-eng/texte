@@ -1173,8 +1173,9 @@ if uploaded_files:
                         markers=True,
                         template="plotly_dark",
                         category_orders={"Camelot": CAMELOT_ORDER},  # Trier par roue de Camelot
-                        hover_data={"Note": True, "Temps": ":.2f"}  # Garder le nom de la note au survol
+                        hover_data={"Note": True, "Temps": True}  # Garder le nom de la note au survol
                     )
+                    fig_tl.update_traces(hovertemplate="<b>%{customdata[0]}</b><br>Temps : %{x:.2f}s<br>Camelot : %{y}<extra></extra>")
                     fig_tl.update_layout(height=300, margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
                     st.plotly_chart(fig_tl, use_container_width=True, key=f"timeline_{analysis_data['name']}_{i}")
                 with c2:
