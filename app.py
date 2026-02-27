@@ -24,14 +24,8 @@ import shutil
 st.set_page_config(page_title="RCDJ228 MUSIC SNIPER", page_icon="🎯", layout="wide")
 
 # Récupération des secrets
-try:
-    TELEGRAM_TOKEN = st.secrets["TELEGRAM_TOKEN"]
-except (KeyError, FileNotFoundError):
-    TELEGRAM_TOKEN = None
-try:
-    CHAT_ID = st.secrets["CHAT_ID"]
-except (KeyError, FileNotFoundError):
-    CHAT_ID = None
+TELEGRAM_TOKEN = st.secrets.get("TELEGRAM_TOKEN")
+CHAT_ID = st.secrets.get("CHAT_ID")
 
 # --- RÉFÉRENTIELS HARMONIQUES ---
 NOTES_LIST = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
@@ -425,7 +419,7 @@ def get_exact_camelot(key_str):
         if tonic_str:
             options = [opt.strip() for opt in tonic_str.split('/')]
             if note in options:
-                if mode in ['aeolian', 'dorian', 'phrygian', 'locrian']:
+                if mode in ['aeolian', 'dorian', 'phrygian']:
                     suffix = 'A'
                 else:
                     suffix = 'B'
@@ -663,8 +657,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
                 "Mode": res_modal.get('key', res['key'])
             })
 
-            total_segs = max(len(segments), 1)
-            p_val = 50 + int((i / total_segs) * 40)
+            p_val = 50 + int((i / len(segments)) * 40)
             update_prog(p_val, "Calcul chirurgical en cours")
 
         update_prog(90, "Synthèse finale et validation de la tonique")
@@ -1019,18 +1012,12 @@ def process_audio(audio_file, file_name, progress_placeholder):
 
 
 def get_chord_js(btn_id, key_str):
-    parts = key_str.split()
-    note = parts[0] if parts else 'C'
-    mode = parts[1] if len(parts) > 1 else 'ionian'
-    # Modes à famille mineure (tierce mineure = +3 demi-tons)
-    minor_family = {'minor', 'aeolian', 'dorian', 'phrygian', 'locrian'}
-    is_minor = mode in minor_family
-    intervals_js = "[0, 3, 7, 12]" if is_minor else "[0, 4, 7, 12]"
+    note, mode = key_str.split()
     return f"""
     document.getElementById('{btn_id}').onclick = function() {{
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
         const freqs = {{'C':261.6,'C#':277.2,'D':293.7,'D#':311.1,'E':329.6,'F':349.2,'F#':370.0,'G':392.0,'G#':415.3,'A':440.0,'A#':466.2,'B':493.9}};
-        const intervals = {intervals_js};
+        const intervals = '{mode}' === 'minor' ? [0, 3, 7, 12] : [0, 4, 7, 12];
         intervals.forEach(i => {{
             const o = ctx.createOscillator(); const g = ctx.createGain();
             o.type = 'triangle'; o.frequency.setValueAtTime(freqs['{note}'] * Math.pow(2, i/12), ctx.currentTime);
