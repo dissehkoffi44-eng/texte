@@ -18,6 +18,7 @@ from scipy.spatial.distance import pdist
 import os
 import tempfile
 import shutil
+import traceback
 
 # --- CONFIGURATION SYSTÈME ---
 st.set_page_config(page_title="RCDJ228 MUSIC SNIPER", page_icon="🎯", layout="wide")
@@ -272,7 +273,6 @@ def solve_key_sniper(chroma_vector, bass_vector):
     best_overall_score = -1
     best_key = "Unknown"
     cv = (chroma_vector - chroma_vector.min()) / (chroma_vector.max() - chroma_vector.min() + 1e-6)
-    # bv n'est plus utilisé pour le bonus aveugle, mais gardé en entrée pour ne pas casser les autres fonctions
     bv = (bass_vector   - bass_vector.min())   / (bass_vector.max()   - bass_vector.min()   + 1e-6)
     for m_name in ALL_MODES:
         for i in range(12):
@@ -282,11 +282,8 @@ def solve_key_sniper(chroma_vector, bass_vector):
             for p_name in PROFILES_ROLLED:
                 rolled = PROFILES_ROLLED[p_name][m_name][i]
                 score  = np.corrcoef(cv, rolled)[0, 1]
-                # --- BONUS DE STRUCTURE (Accord Solide) ---
-                # On valide que la Quinte et la Tierce (qui définit le mode) sont physiquement présentes
                 if cv[fifth_idx] > 0.6 and cv[third_idx] > 0.4:
                     score += 0.25
-                # Bonus mineur si la quinte seule "perce" le mix (très commun en musique électronique)
                 elif cv[fifth_idx] > 0.6:
                     score += 0.1
                 profile_scores.append(score)
@@ -306,7 +303,6 @@ def solve_key_sniper_modal(chroma_vector, bass_vector):
             score  = np.corrcoef(cv, rolled)[0, 1]
             third_idx = (i + MODE_THIRD[m_name]) % 12
             fifth_idx = (i + 7) % 12
-            # --- BONUS DE STRUCTURE ---
             if cv[fifth_idx] > 0.6 and cv[third_idx] > 0.4:
                 score += 0.25
             elif cv[fifth_idx] > 0.6:
@@ -336,13 +332,116 @@ def get_key_score(key, chroma_vector, bass_vector):
             fallback = 'major'
             rolled   = PROFILES_ROLLED[p_name][fallback][root_idx]
         score = np.corrcoef(cv_norm, rolled)[0, 1]
-        # --- BONUS DE STRUCTURE ---
         if cv_norm[fifth_idx] > 0.6 and cv_norm[third_idx] > 0.4:
             score += 0.25
         elif cv_norm[fifth_idx] > 0.6:
             score += 0.1
         profile_scores.append(score)
     return np.mean(profile_scores)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# --- ENVOI TELEGRAM CORRIGÉ (VERSION FINALE) ---
+def send_telegram_report(caption, fig_radar, fig_timeline, file_name):
+    """
+    Envoi du rapport Telegram avec gestion robuste des erreurs.
+    Envoie d'abord le texte, puis les images séparément.
+    """
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        return False
+    
+    try:
+        # Étape 1: Envoyer le texte du rapport comme message séparé
+        # Essayer d'abord avec HTML, sinon texte brut
+        try:
+            text_response = requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                data={
+                    'chat_id': CHAT_ID,
+                    'text': caption,
+                    'parse_mode': 'HTML',
+                    'disable_web_page_preview': True
+                },
+                timeout=30
+            )
+            
+            # Si le HTML échoue, réessayer sans parse_mode (texte brut)
+            if not text_response.ok:
+                requests.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                    data={
+                        'chat_id': CHAT_ID,
+                        'text': caption,
+                        'disable_web_page_preview': True
+                    },
+                    timeout=30
+                )
+        except:
+            # Dernière tentative en texte brut
+            requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                data={
+                    'chat_id': CHAT_ID,
+                    'text': caption,
+                    'disable_web_page_preview': True
+                },
+                timeout=30
+            )
+        
+        # Étape 2: Envoyer le graphique radar
+        radar_bytes = fig_radar.to_image(format="png", width=700, height=500)
+        
+        radar_response = requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto",
+            data={
+                'chat_id': CHAT_ID,
+                'caption': '📊 Spectre Harmonique (Camelot)'
+            },
+            files={'photo': ('radar.png', radar_bytes, 'image/png')},
+            timeout=30
+        )
+        
+        if not radar_response.ok:
+            st.warning(f"Erreur envoi radar Telegram: {radar_response.text[:200]}")
+        
+        # Étape 3: Envoyer la timeline si disponible
+        if fig_timeline is not None:
+            timeline_bytes = fig_timeline.to_image(format="png", width=1000, height=450)
+            
+            timeline_response = requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto",
+                data={
+                    'chat_id': CHAT_ID,
+                    'caption': '📈 Évolution Temporelle (Timeline)'
+                },
+                files={'photo': ('timeline.png', timeline_bytes, 'image/png')},
+                timeout=30
+            )
+            
+            if not timeline_response.ok:
+                st.warning(f"Erreur envoi timeline Telegram: {timeline_response.text[:200]}")
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"Erreur d'envoi Telegram : {str(e)}")
+        st.error(traceback.format_exc())
+        
+        # Tentative de secours : envoyer juste le texte
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                data={
+                    'chat_id': CHAT_ID,
+                    'text': f"🎯 RCDJ228 - Rapport pour {file_name}\n\n(Erreur lors de l'envoi complet: {str(e)[:100]})",
+                    'disable_web_page_preview': True
+                },
+                timeout=10
+            )
+        except:
+            pass
+        
+        return False
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -608,88 +707,128 @@ def process_audio(audio_file, file_name, progress_placeholder):
                 avis_expert        = f"✅ ANALYSE STABLE"
                 color_bandeau      = "linear-gradient(135deg, #065f46, #064e3b)"
 
-        # Telegram
+        # --- CONSTRUCTION DU RAPPORT TELEGRAM (FORMAT TEXTE SIMPLE) ---
         if TELEGRAM_TOKEN and CHAT_ID:
             try:
+                # Préparation des lignes du rapport
                 mod_line = ""
                 if mod_detected:
                     perc    = round(target_percentage, 1)
-                    end_txt = " 🏁 *FIN SUR MODULATION*" if ends_in_target else ""
+                    end_txt = " 🏁 FIN SUR MODULATION" if ends_in_target else ""
                     mod_line = (
-                        f"\n⚠️ *MODULATION →* `{target_key.upper()} ({get_exact_camelot(target_key)})`"
-                        f" | ≈ *{seconds_to_mmss(modulation_time)}*"
-                        f" | *PRÉSENCE:* `{perc}%`"
-                        f" | *CONFIANCE:* `{target_conf}%`"
+                        f"\n⚠️ MODULATION → {target_key.upper()} ({get_exact_camelot(target_key)})"
+                        f" | ≈ {seconds_to_mmss(modulation_time)}"
+                        f" | PRÉSENCE: {perc}%"
+                        f" | CONFIANCE: {target_conf}%"
                         f"{end_txt}"
                     )
 
                 dom_line  = (
-                    f"\n🏆 *TONALITÉ DOMINANTE:* `{dominant_key.upper()} ({dominant_camelot})`"
-                    f" | *PRÉSENCE:* `{round(dominant_percentage, 1)}%`"
-                    f" | *CONFIANCE:* `{dominant_conf}%`"
+                    f"\n🏆 TONALITÉ DOMINANTE: {dominant_key.upper()} ({dominant_camelot})"
+                    f" | PRÉSENCE: {round(dominant_percentage, 1)}%"
+                    f" | CONFIANCE: {dominant_conf}%"
                 )
 
                 consonance_line = (
-                    f"\n🎹 *TONALITÉ DE LA CONSONANCE:* `{final_key.upper()} ({get_exact_camelot(final_key)})`"
-                    f" | *PRÉSENCE:* `{round(final_percentage, 1)}%`"
-                    f" | *CONFIANCE:* `{min(int(raw_final_conf), 100)}%`"
+                    f"\n🎹 TONALITÉ DE LA CONSONANCE: {final_key.upper()} ({get_exact_camelot(final_key)})"
+                    f" | PRÉSENCE: {round(final_percentage, 1)}%"
+                    f" | CONFIANCE: {min(int(raw_final_conf), 100)}%"
                 )
 
                 modal_emojis = {"major": "🟢 (Majeur)", "minor": "🔵 (Mineur)"}
                 modal_emoji  = modal_emojis.get(modal_raw_mode, "⚪")
                 modal_line   = (
-                    f"\n🎼 *MODE DÉTECTÉ :* {modal_emoji}"
-                    f"\n└ `{modal_key.upper()} ({modal_camelot})`"
+                    f"\n🎼 MODE DÉTECTÉ : {modal_emoji}"
+                    f"\n└ {modal_key.upper()} ({modal_camelot})"
                 )
 
                 tuning_display = "440.0 Hz (corrigé automatiquement)" if correction_applied else f"{round(440 * (2 ** (tuning / 1200)), 1)} Hz"
-                accordage_line = f"🎸 *ACCORDAGE :* `{tuning_display}` ✅\n"
+                accordage_line = f"🎸 ACCORDAGE : {tuning_display} ✅\n"
 
                 # --- DÉTECTION DE CHOC HARMONIQUE ---
                 choc_harmonique_alerte = ""
                 is_dissonant = False
 
                 if final_key != dominant_key:
-                    cam_final = int(get_exact_camelot(final_key)[:-1])
-                    cam_dom = int(get_exact_camelot(dominant_key)[:-1])
-
-                    # Si les deux clés ont plus de 1 pas d'écart sur la Camelot Wheel
-                    diff = abs(cam_final - cam_dom)
-                    if diff > 1 and diff < 11:
-                        is_dissonant = True
-                        choc_harmonique_alerte = (
-                            f"\n⚠️ *CHOC HARMONIQUE DÉTECTÉ:*\n"
-                            f"└ Le moteur indique `{get_exact_camelot(final_key)}`, mais l'énergie brute frappe en `{get_exact_camelot(dominant_key)}`. "
-                            f"Risque de dissonance lors du mixage."
-                        )
+                    cam_final = get_exact_camelot(final_key)
+                    cam_dom = get_exact_camelot(dominant_key)
+                    
+                    if cam_final not in ("??", "") and cam_dom not in ("??", ""):
+                        try:
+                            cam_final_num = int(cam_final[:-1])
+                            cam_dom_num = int(cam_dom[:-1])
+                            diff = abs(cam_final_num - cam_dom_num)
+                            if diff > 1 and diff < 11:
+                                is_dissonant = True
+                                choc_harmonique_alerte = (
+                                    f"\n⚠️ CHOC HARMONIQUE DÉTECTÉ:\n"
+                                    f"└ Le moteur indique {cam_final}, mais l'énergie brute frappe en {cam_dom}. "
+                                    f"Risque de dissonance lors du mixage."
+                                )
+                        except (ValueError, IndexError):
+                            pass
 
                 # --- TONALITÉ VERROUILLÉE PAR L'ALGORITHME ---
                 pure_camelot_tg = get_exact_camelot(confiance_pure_key)
                 verrou_emoji = "🔴" if is_dissonant else "🟢"
                 verrou_line = (
-                    f"\n🔒 *TONALITÉ VERROUILLÉE:* `{confiance_pure_key.upper()} ({pure_camelot_tg})`"
+                    f"\n🔒 TONALITÉ VERROUILLÉE: {confiance_pure_key.upper()} ({pure_camelot_tg})"
                     f"  {verrou_emoji}"
-                    f"\n└ 🤖 *AVIS EXPERT:* _{avis_expert}_"
+                    f"\n└ 🤖 AVIS EXPERT: {avis_expert}"
                 )
 
+                # --- CONSENSUS HARMONIQUE (systématique) ---
+                cam_moteur   = get_exact_camelot(final_key)
+                cam_energie  = get_exact_camelot(dominant_key)
+                if final_key == dominant_key:
+                    consensus_statut = "✅ ACCORD PARFAIT"
+                else:
+                    consensus_statut = "⚠️ DIVERGENCE" if is_dissonant else "🔀 LÉGÈRE DIFFÉRENCE"
+
+                consensus_line = (
+                    f"\n🧠 CONSENSUS HARMONIQUE : {consensus_statut}"
+                    f"\n├ Moteur (consonance) : {final_key.upper()} ({cam_moteur})"
+                    f"  — Confiance : {min(int(raw_final_conf), 100)}%"
+                    f"\n└ Énergie brute (dominante) : {dominant_key.upper()} ({cam_energie})"
+                    f"  — Confiance : {dominant_conf}%"
+                )
+
+                # --- FRÉQUENCE DOMINANTE (systématique) ---
+                freq_dominante_line = (
+                    f"\n🔊 FRÉQUENCE DOMINANTE :"
+                    f"\n├ Clé : {dominant_key.upper()} ({cam_energie})"
+                    f"\n├ Présence : {round(dominant_percentage, 1)}%"
+                    f"\n└ Force (dom_power) : {round(dom_power, 1)}"
+                )
+
+                # Construction du caption final (format texte simple, sans Markdown)
                 caption = (
-                    f"🎯 *RCDJ228 MUSIC SNIPER*\n"
+                    f"🎯 RCDJ228 MUSIC SNIPER\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
-                    f"📂 *FICHIER:* `{file_name}`\n"
-                    + accordage_line
-                    + verrou_line
-                    + "\n"
+                    f"📂 FICHIER: {file_name}\n"
+                    f"{accordage_line}\n"
+                    f"{verrou_line}\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
-                    + consonance_line
-                    + dom_line
-                    + modal_line
-                    + mod_line
-                    + choc_harmonique_alerte
-                    + "\n"
+                    f"{consonance_line}\n"
+                    f"{dom_line}\n"
+                    f"{modal_line}"
+                )
+                
+                if mod_line:
+                    caption += f"\n{mod_line}"
+                
+                if choc_harmonique_alerte:
+                    caption += f"\n{choc_harmonique_alerte}"
+                
+                caption += (
+                    f"\n━━━━━━━━━━━━━━━━━━\n"
+                    f"{consensus_line}\n"
+                    f"{freq_dominante_line}\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
-                    f"🛡️ *SECTION HARMONIQUE:* {seconds_to_mmss(harm_start)} → {seconds_to_mmss(harm_end)}"
+                    f"🛡️ SECTION HARMONIQUE: {seconds_to_mmss(harm_start)} → {seconds_to_mmss(harm_end)}"
                 )
 
+                # Création des graphiques
                 CAMELOT_LABELS_TG = [get_exact_camelot(f"{n} major") for n in NOTES_LIST]
                 fig_radar = go.Figure(data=go.Scatterpolar(
                     r=np.mean(librosa.feature.chroma_cqt(y=y_filt, sr=sr, tuning=tuning), axis=1),
@@ -700,20 +839,12 @@ def process_audio(audio_file, file_name, progress_placeholder):
                     title="SPECTRE HARMONIQUE (Camelot)",
                     polar=dict(radialaxis=dict(visible=False))
                 )
-                radar_bytes = fig_radar.to_image(format="png", width=700, height=500)
 
-                CAMELOT_ORDER_TG = [f"{i}{m}" for i in range(1, 13) for m in ['A', 'B']]
+                # Timeline (optionnelle)
+                fig_tl = None
                 df_tl = pd.DataFrame(timeline)
-
-                media_group = []
-                files = {}
-                media_group.append({
-                    'type': 'photo', 'media': 'attach://radar.png',
-                    'caption': caption, 'parse_mode': 'Markdown'
-                })
-                files['radar.png'] = radar_bytes
-
                 if not df_tl.empty:
+                    CAMELOT_ORDER_TG = [f"{i}{m}" for i in range(1, 13) for m in ['A', 'B']]
                     fig_tl = px.line(
                         df_tl, x="Temps", y="Camelot", markers=True,
                         template="plotly_dark",
@@ -721,18 +852,13 @@ def process_audio(audio_file, file_name, progress_placeholder):
                         hover_data={"Note": True, "Temps": ":.2f"},
                         title="ÉVOLUTION TEMPORELLE (Camelot)"
                     )
-                    timeline_bytes = fig_tl.to_image(format="png", width=1000, height=450)
-                    media_group.append({'type': 'photo', 'media': 'attach://timeline.png'})
-                    files['timeline.png'] = timeline_bytes
 
-                requests.post(
-                    f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMediaGroup",
-                    data={'chat_id': CHAT_ID, 'media': json.dumps(media_group)},
-                    files=files
-                )
+                # Envoi du rapport Telegram avec la fonction corrigée
+                send_telegram_report(caption, fig_radar, fig_tl, file_name)
 
             except Exception as e:
-                st.error(f"Erreur d'envoi Telegram : {e}")
+                st.error(f"Erreur lors de la construction du rapport Telegram : {e}")
+                st.error(traceback.format_exc())
 
         update_prog(100, "Analyse terminée")
         status_text.empty()
@@ -1024,10 +1150,19 @@ if uploaded_files:
                             verdict = "💎 STABILITÉ HARMONIQUE"
                             verdict_color = "#10b981"
                         
+                        # Conversion correcte de l'hex en RGB pour le rgba
+                        try:
+                            verdict_r = int(verdict_color[1:3], 16)
+                            verdict_g = int(verdict_color[3:5], 16)
+                            verdict_b = int(verdict_color[5:7], 16)
+                            verdict_bg = f"rgba({verdict_r}, {verdict_g}, {verdict_b}, 0.1)"
+                        except:
+                            verdict_bg = "rgba(245, 158, 11, 0.1)"
+                        
                         st.markdown(
                             f"""
                             <div style="
-                                background: rgba({verdict_color.replace('#', '')}, 0.1);
+                                background: {verdict_bg};
                                 border: 1px solid {verdict_color};
                                 border-radius: 10px;
                                 padding: 15px;
@@ -1079,6 +1214,33 @@ if uploaded_files:
                                 )
                         except (ValueError, IndexError):
                             pass
+
+                # --- AFFICHAGE SYSTÉMATIQUE DU CONSENSUS ET DE LA FRÉQUENCE ---
+                tonalite_moteur = analysis_data.get('camelot', '??')
+                note_brute = analysis_data.get('dominant_key', 'Inconnue')
+                freq_brute = analysis_data.get('dominant_percentage', 0)
+                st.info(
+                    f"🔍 **Analyse approfondie** : Le moteur de tonalité indique **{tonalite_moteur}**, "
+                    f"et l'énergie brute frappe en **{note_brute}**."
+                )
+                col_cons, col_freq = st.columns(2)
+                with col_cons:
+                    st.markdown("**🧠 Consensus Harmonique**")
+                    df_consensus = pd.DataFrame({
+                        "Moteur (Camelot)": [tonalite_moteur],
+                        "Énergie Brute": [note_brute],
+                        "Confiance Moteur": [f"{analysis_data.get('conf', 0)}%"],
+                        "Confiance Brute": [f"{analysis_data.get('dominant_conf', 0)}%"],
+                    })
+                    st.dataframe(df_consensus, use_container_width=True)
+                with col_freq:
+                    st.markdown("**🔊 Fréquence Dominante (Top 1)**")
+                    df_freq = pd.DataFrame({
+                        "Clé Dominante": [note_brute],
+                        "Camelot Dominant": [analysis_data.get('dominant_camelot', '??')],
+                        "Présence (%)": [f"{freq_brute}%"],
+                    })
+                    st.dataframe(df_freq, use_container_width=True)
 
                 if analysis_data.get("correction_applied", False):
                     st.success(f"🎸 **{analysis_data.get('correction_info', 'Accordage corrigé automatiquement à 440 Hz')}**")
