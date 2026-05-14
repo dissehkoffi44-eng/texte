@@ -876,12 +876,161 @@ if uploaded_files:
                         value=f"{analysis_data.get('conf', 0)}%"
                     )
 
-                if analysis_data.get("correction_applied", False):
-                    st.success(f"🎸 **{analysis_data.get('correction_info', 'Accordage corrigé automatiquement à 440 Hz')}**")
-                else:
-                    st.info(f"🎸 Accordage détecté : {analysis_data.get('tuning', 440.0)} Hz")
+                # --- NOUVELLE CASE : TONALITÉ VERROUILLÉE PAR L'ALGORITHME ---
+                st.markdown("---")
+                st.subheader("🔒 DÉCISION FINALE DE L'ALGORITHME")
 
-                # Affichage de l'alerte de choc harmonique sur l'interface Web
+                verrou_col1, verrou_col2 = st.columns([3, 2])
+
+                with verrou_col1:
+                    # Style pour la case verrouillée
+                    border_color = "#10b981"  # Vert par défaut
+                    bg_color = "rgba(16, 185, 129, 0.1)"
+                    
+                    # Si choc harmonique, changer la couleur
+                    if analysis_data["key"] != analysis_data["dominant_key"]:
+                        _cam_f_str = analysis_data.get("camelot", "??")
+                        _cam_d_str = analysis_data.get("dominant_camelot", "??")
+                        if _cam_f_str not in ("??", "") and _cam_d_str not in ("??", ""):
+                            try:
+                                _cam_f = int(_cam_f_str[:-1])
+                                _cam_d = int(_cam_d_str[:-1])
+                                _diff = abs(_cam_f - _cam_d)
+                                if _diff > 1 and _diff < 11:
+                                    border_color = "#ef4444"  # Rouge pour choc
+                                    bg_color = "rgba(239, 68, 68, 0.1)"
+                            except (ValueError, IndexError):
+                                pass
+                    
+                    confiance_pure = analysis_data.get("confiance_pure_key", "Unknown")
+                    pure_camelot = analysis_data.get("pure_camelot", "??")
+                    
+                    st.markdown(
+                        f"""
+                        <div style="
+                            background: {bg_color};
+                            border: 3px solid {border_color};
+                            border-radius: 15px;
+                            padding: 20px;
+                            text-align: center;
+                            transition: all 0.3s ease;
+                            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+                        ">
+                            <span style="font-size: 0.9em; color: #94a3b8;">🎯 TONALITÉ VERROUILLÉE</span><br>
+                            <span style="font-size: 2.5em; font-weight: 900; color: {border_color}; 
+                                         font-family: 'JetBrains Mono', monospace;">
+                                {confiance_pure.upper()}
+                            </span><br>
+                            <span style="font-size: 1.8em; font-weight: bold; color: #94a3b8;">
+                                🏷️ {pure_camelot}
+                            </span>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+                with verrou_col2:
+                    avis = analysis_data.get("avis_expert", "")
+                    st.markdown(
+                        f"""
+                        <div style="
+                            background: rgba(88, 166, 255, 0.1);
+                            border: 2px solid #58a6ff;
+                            border-radius: 15px;
+                            padding: 20px;
+                            height: 100%;
+                            display: flex;
+                            flex-direction: column;
+                            justify-content: center;
+                        ">
+                            <span style="font-size: 0.9em; color: #94a3b8;">🤖 AVIS EXPERT</span><br>
+                            <span style="font-size: 1.2em; font-weight: bold; color: #58a6ff;">
+                                {avis}
+                            </span>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+                # Affichage détaillé si conflit
+                if analysis_data["key"] != analysis_data["dominant_key"]:
+                    st.markdown("---")
+                    detail_col1, detail_col2, detail_col3 = st.columns(3)
+                    
+                    with detail_col1:
+                        st.markdown(
+                            f"""
+                            <div style="
+                                background: rgba(16, 185, 129, 0.1);
+                                border: 1px solid #10b981;
+                                border-radius: 10px;
+                                padding: 15px;
+                                text-align: center;
+                            ">
+                                <span style="color: #10b981;">✅ CONSENSUS HARMONIQUE</span><br>
+                                <span style="font-size: 1.3em; font-weight: bold;">
+                                    {analysis_data['key']} ({analysis_data['camelot']})
+                                </span><br>
+                                <span style="font-size: 0.8em; color: #94a3b8;">
+                                    Confiance: {analysis_data.get('conf', 0)}%
+                                </span>
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                    
+                    with detail_col2:
+                        st.markdown(
+                            f"""
+                            <div style="
+                                background: rgba(124, 58, 237, 0.1);
+                                border: 1px solid #7c3aed;
+                                border-radius: 10px;
+                                padding: 15px;
+                                text-align: center;
+                            ">
+                                <span style="color: #7c3aed;">⚡ FRÉQUENCE DOMINANTE</span><br>
+                                <span style="font-size: 1.3em; font-weight: bold;">
+                                    {analysis_data['dominant_key']} ({analysis_data['dominant_camelot']})
+                                </span><br>
+                                <span style="font-size: 0.8em; color: #94a3b8;">
+                                    Présence: {analysis_data.get('dominant_percentage', 0)}%
+                                </span>
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+                    
+                    with detail_col3:
+                        verdict = "🔀 CONFLIT DÉTECTÉ"
+                        verdict_color = "#f59e0b"
+                        
+                        if analysis_data.get("confiance_pure_key") == analysis_data["dominant_key"]:
+                            verdict = "⚡ DOMINATION FRÉQUENTIELLE"
+                            verdict_color = "#7c3aed"
+                        elif analysis_data.get("confiance_pure_key") == analysis_data["key"]:
+                            verdict = "💎 STABILITÉ HARMONIQUE"
+                            verdict_color = "#10b981"
+                        
+                        st.markdown(
+                            f"""
+                            <div style="
+                                background: rgba({verdict_color.replace('#', '')}, 0.1);
+                                border: 1px solid {verdict_color};
+                                border-radius: 10px;
+                                padding: 15px;
+                                text-align: center;
+                            ">
+                                <span style="color: {verdict_color};">🎯 VERDICT FINAL</span><br>
+                                <span style="font-size: 1em; font-weight: bold; color: {verdict_color};">
+                                    {verdict}
+                                </span>
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
+
+                # Si choc harmonique, afficher l'alerte détaillée
                 if analysis_data["key"] != analysis_data["dominant_key"]:
                     _cam_f_str = analysis_data.get("camelot", "??")
                     _cam_d_str = analysis_data.get("dominant_camelot", "??")
@@ -892,16 +1041,37 @@ if uploaded_files:
                             _diff = abs(_cam_f - _cam_d)
                             if _diff > 1 and _diff < 11:
                                 st.markdown(
-                                    f"<div style='background:rgba(239,68,68,0.12); border:1px solid #ef4444; border-radius:15px;"
-                                    f"padding:14px 20px; margin-bottom:12px; font-family:JetBrains Mono,monospace; color:#fca5a5;'>"
-                                    f"⚠️ <b>CHOC HARMONIQUE POSSIBLE</b> : L'algorithme a verrouillé <b>{analysis_data['camelot']}</b> "
-                                    f"grâce à la structure mélodique, mais une fréquence parasite massive sature en <b>{analysis_data['dominant_camelot']}</b>. "
-                                    f"Soyez prudent sur l'égalisation des basses lors de la transition."
-                                    f"</div>",
+                                    f"""
+                                    <div style="
+                                        background: rgba(239, 68, 68, 0.15);
+                                        border: 2px solid #ef4444;
+                                        border-radius: 15px;
+                                        padding: 20px;
+                                        margin-top: 15px;
+                                    ">
+                                        <span style="font-size: 1.5em;">⚠️</span>
+                                        <span style="font-size: 1.2em; font-weight: bold; color: #fca5a5;">
+                                            CHOC HARMONIQUE DÉTECTÉ
+                                        </span><br><br>
+                                        <span style="color: #fca5a5; line-height: 1.6;">
+                                            L'algorithme a verrouillé <b style="color: #10b981;">{analysis_data['camelot']}</b> 
+                                            grâce à la structure mélodique, mais une fréquence parasite massive sature en 
+                                            <b style="color: #7c3aed;">{analysis_data['dominant_camelot']}</b>.<br>
+                                            <span style="font-size: 0.9em; color: #94a3b8;">
+                                                → Soyez prudent sur l'égalisation des basses lors de la transition.
+                                            </span>
+                                        </span>
+                                    </div>
+                                    """,
                                     unsafe_allow_html=True
                                 )
                         except (ValueError, IndexError):
                             pass
+
+                if analysis_data.get("correction_applied", False):
+                    st.success(f"🎸 **{analysis_data.get('correction_info', 'Accordage corrigé automatiquement à 440 Hz')}**")
+                else:
+                    st.info(f"🎸 Accordage détecté : {analysis_data.get('tuning', 440.0)} Hz")
 
                 if analysis_data.get('modulation', False):
                     secondary_key = analysis_data.get('target_key')
