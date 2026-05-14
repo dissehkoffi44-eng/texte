@@ -663,11 +663,23 @@ def process_audio(audio_file, file_name, progress_placeholder):
                             f"Risque de dissonance lors du mixage."
                         )
 
+                # --- TONALITÉ VERROUILLÉE PAR L'ALGORITHME ---
+                pure_camelot_tg = get_exact_camelot(confiance_pure_key)
+                verrou_emoji = "🔴" if is_dissonant else "🟢"
+                verrou_line = (
+                    f"\n🔒 *TONALITÉ VERROUILLÉE:* `{confiance_pure_key.upper()} ({pure_camelot_tg})`"
+                    f"  {verrou_emoji}"
+                    f"\n└ 🤖 *AVIS EXPERT:* _{avis_expert}_"
+                )
+
                 caption = (
                     f"🎯 *RCDJ228 MUSIC SNIPER*\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
                     f"📂 *FICHIER:* `{file_name}`\n"
                     + accordage_line
+                    + verrou_line
+                    + "\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
                     + consonance_line
                     + dom_line
                     + modal_line
