@@ -672,6 +672,30 @@ def process_audio(audio_file, file_name, progress_placeholder):
                     f"\n└ 🤖 *AVIS EXPERT:* _{avis_expert}_"
                 )
 
+                # --- CONSENSUS HARMONIQUE (systématique) ---
+                cam_moteur   = get_exact_camelot(final_key)
+                cam_energie  = get_exact_camelot(dominant_key)
+                if final_key == dominant_key:
+                    consensus_statut = "✅ ACCORD PARFAIT"
+                else:
+                    consensus_statut = "⚠️ DIVERGENCE" if is_dissonant else "🔀 LÉGÈRE DIFFÉRENCE"
+
+                consensus_line = (
+                    f"\n🧠 *CONSENSUS HARMONIQUE :* {consensus_statut}"
+                    f"\n├ Moteur (consonance) : `{final_key.upper()} ({cam_moteur})`"
+                    f"  — Confiance : `{min(int(raw_final_conf), 100)}%`"
+                    f"\n└ Énergie brute (dominante) : `{dominant_key.upper()} ({cam_energie})`"
+                    f"  — Confiance : `{dominant_conf}%`"
+                )
+
+                # --- FRÉQUENCE DOMINANTE (systématique) ---
+                freq_dominante_line = (
+                    f"\n🔊 *FRÉQUENCE DOMINANTE :*"
+                    f"\n├ Clé : `{dominant_key.upper()} ({cam_energie})`"
+                    f"\n├ Présence : `{round(dominant_percentage, 1)}%`"
+                    f"\n└ Force (dom_power) : `{round(dom_power, 1)}`"
+                )
+
                 caption = (
                     f"🎯 *RCDJ228 MUSIC SNIPER*\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
@@ -685,6 +709,11 @@ def process_audio(audio_file, file_name, progress_placeholder):
                     + modal_line
                     + mod_line
                     + choc_harmonique_alerte
+                    + "\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    + consensus_line
+                    + "\n"
+                    + freq_dominante_line
                     + "\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
                     f"🛡️ *SECTION HARMONIQUE:* {seconds_to_mmss(harm_start)} → {seconds_to_mmss(harm_end)}"
@@ -1079,6 +1108,34 @@ if uploaded_files:
                                 )
                         except (ValueError, IndexError):
                             pass
+
+                # --- AFFICHAGE SYSTÉMATIQUE DU CONSENSUS ET DE LA FRÉQUENCE ---
+                # Toujours affiché, qu'il y ait un choc ou non
+                tonalite_moteur = analysis_data.get('camelot', '??')
+                note_brute = analysis_data.get('dominant_key', 'Inconnue')
+                freq_brute = analysis_data.get('dominant_percentage', 0)
+                st.info(
+                    f"🔍 **Analyse approfondie** : Le moteur de tonalité indique **{tonalite_moteur}**, "
+                    f"et l'énergie brute frappe en **{note_brute}**."
+                )
+                col_cons, col_freq = st.columns(2)
+                with col_cons:
+                    st.markdown("**🧠 Consensus Harmonique**")
+                    df_consensus = pd.DataFrame({
+                        "Moteur (Camelot)": [tonalite_moteur],
+                        "Énergie Brute": [note_brute],
+                        "Confiance Moteur": [f"{analysis_data.get('conf', 0)}%"],
+                        "Confiance Brute": [f"{analysis_data.get('dominant_conf', 0)}%"],
+                    })
+                    st.dataframe(df_consensus, use_container_width=True)
+                with col_freq:
+                    st.markdown("**🔊 Fréquence Dominante (Top 1)**")
+                    df_freq = pd.DataFrame({
+                        "Clé Dominante": [note_brute],
+                        "Camelot Dominant": [analysis_data.get('dominant_camelot', '??')],
+                        "Présence (%)": [f"{freq_brute}%"],
+                    })
+                    st.dataframe(df_freq, use_container_width=True)
 
                 if analysis_data.get("correction_applied", False):
                     st.success(f"🎸 **{analysis_data.get('correction_info', 'Accordage corrigé automatiquement à 440 Hz')}**")
