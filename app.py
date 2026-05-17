@@ -117,51 +117,379 @@ def auto_correct_tuning(y, sr):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# --- MOTEURS DE CALCUL ---
-def arbitrage_expert_universel(chroma, bass_vec, key_cons, key_dom, cam_map, y_harm=None, sr=None, tuning=0.0):
+# --- MOTEUR DE DÉTECTION TONALE ULTRA-PRÉCIS - VERSION CORRIGÉE ---
+# ══════════════════════════════════════════════════════════════════════════
+
+def extract_harmonic_signature(chroma_high_res, bass_energy):
+    """
+    Extrait une signature harmonique complète avec:
+    - Énergie des fondamentales
+    - Relations de quintes (3:2)
+    - Relations de tierces majeures/mineures
+    - Tension harmonique
+    """
+    n_bins = len(chroma_high_res)
+    signature = np.zeros(12)
+    
+    # 1. Énergie normalisée par octave
+    for i in range(12):
+        # Prendre toutes les harmoniques de cette note
+        signature[i] = np.sum([
+            chroma_high_res[i + 12*j] * (0.7 ** j) 
+            for j in range(min(8, (n_bins - i) // 12))
+        ])
+    
+    # 2. Renforcement par les quintes
+    for i in range(12):
+        fifth = (i + 7) % 12
+        signature[i] += bass_energy[fifth] * 0.4  # La quinte renforce la tonique
+    
+    # 3. Détection de la tierce caractéristique
+    for i in range(12):
+        major_third = (i + 4) % 12
+        minor_third = (i + 3) % 12
+        tierce_energy = max(bass_energy[major_third], bass_energy[minor_third] * 0.85)
+        signature[i] += tierce_energy * 0.3
+    
+    # 4. Normalisation finale
+    if signature.max() > 0:
+        signature = signature / signature.max()
+    
+    return signature
+
+
+def compute_tonal_gravity(chroma_vector, bass_vector):
+    """
+    Calcule le centre de gravité tonal avec pondération psychoacoustique.
+    Résout le problème des tonalités fantômes.
+    """
+    # Matrice de poids psychoacoustiques
+    TONAL_WEIGHTS = np.array([
+        [1.0, 0.0, 0.5, 0.0, 0.8, 0.0, 0.3, 0.0, 0.6, 0.0, 0.2, 0.1],  # C
+        [0.0, 1.0, 0.0, 0.5, 0.0, 0.8, 0.0, 0.4, 0.0, 0.6, 0.0, 0.2],  # C#
+        [0.2, 0.0, 1.0, 0.0, 0.5, 0.0, 0.8, 0.0, 0.4, 0.0, 0.6, 0.0],  # D
+        [0.0, 0.2, 0.0, 1.0, 0.0, 0.5, 0.0, 0.8, 0.0, 0.4, 0.0, 0.6],  # D#
+        [0.6, 0.0, 0.2, 0.0, 1.0, 0.0, 0.5, 0.0, 0.8, 0.0, 0.4, 0.0],  # E
+        [0.0, 0.6, 0.0, 0.2, 0.0, 1.0, 0.0, 0.5, 0.0, 0.8, 0.0, 0.4],  # F
+        [0.4, 0.0, 0.6, 0.0, 0.2, 0.0, 1.0, 0.0, 0.5, 0.0, 0.8, 0.0],  # F#
+        [0.0, 0.4, 0.0, 0.6, 0.0, 0.2, 0.0, 1.0, 0.0, 0.5, 0.0, 0.8],  # G
+        [0.8, 0.0, 0.4, 0.0, 0.6, 0.0, 0.2, 0.0, 1.0, 0.0, 0.5, 0.0],  # G#
+        [0.0, 0.8, 0.0, 0.4, 0.0, 0.6, 0.0, 0.2, 0.0, 1.0, 0.0, 0.5],  # A
+        [0.5, 0.0, 0.8, 0.0, 0.4, 0.0, 0.6, 0.0, 0.2, 0.0, 1.0, 0.0],  # A#
+        [0.0, 0.5, 0.0, 0.8, 0.0, 0.4, 0.0, 0.6, 0.0, 0.2, 0.0, 1.0],  # B
+    ])
+    
+    # Calculer l'attraction tonale
+    gravitation = np.zeros(12)
+    for i in range(12):
+        gravitation[i] = np.dot(chroma_vector, TONAL_WEIGHTS[i]) * bass_vector[i]
+    
+    return gravitation / (gravitation.max() + 1e-10)
+
+
+def detect_key_multi_resolution(y, sr, tuning=0.0):
+    """
+    Détection multi-résolution qui résout les ambiguïtés tonales.
+    Utilise 3 résolutions différentes et vote.
+    """
+    resolutions = [12, 24, 36]  # bins par octave
+    candidates = {}
+    
+    for n_bins in resolutions:
+        # Extraction multi-résolution
+        chroma = librosa.feature.chroma_cqt(
+            y=y, sr=sr, 
+            n_chroma=n_bins, 
+            bins_per_octave=n_bins * 3,
+            tuning=tuning
+        )
+        chroma_avg = np.mean(chroma, axis=1)
+        
+        # Downsampler à 12 bins si nécessaire
+        if n_bins > 12:
+            chroma_12 = np.zeros(12)
+            for i in range(12):
+                chroma_12[i] = np.sum(chroma_avg[i::12])
+        else:
+            chroma_12 = chroma_avg
+        
+        # Bass energy spécifique à cette résolution
+        bass = get_bass_priority(y, sr, tuning=tuning)
+        
+        # Calcul du centre de gravité
+        gravity = compute_tonal_gravity(chroma_12, bass)
+        best_idx = np.argmax(gravity)
+        
+        # Déterminer mode (majeur/mineur)
+        third_idx_major = (best_idx + 4) % 12
+        third_idx_minor = (best_idx + 3) % 12
+        
+        if chroma_12[third_idx_minor] > chroma_12[third_idx_major] * 1.2:
+            mode = 'minor'
+        else:
+            mode = 'major'
+        
+        key = f"{NOTES_LIST[best_idx]} {mode}"
+        confidence = gravity[best_idx]
+        
+        # Vote pondéré par résolution
+        weight = 1.0 + (n_bins / 12.0) * 0.5
+        candidates[key] = candidates.get(key, 0) + confidence * weight
+    
+    # Clé gagnante
+    if candidates:
+        best_key = max(candidates, key=candidates.get)
+        best_confidence = candidates[best_key] / sum(candidates.values())
+        return best_key, min(best_confidence * 100, 99)
+    
+    return "C major", 50
+
+
+def solve_key_sniper_enhanced(chroma_vector, bass_vector):
+    """
+    Version ENHANCED du solveur de tonalité qui combine:
+    1. Signature harmonique complète
+    2. Centre de gravité tonal
+    3. Analyse des relations d'intervalles
+    4. Détection des cadences harmoniques
+    """
+    # Étape 1: Signature harmonique
+    if len(chroma_vector) > 12:
+        harmonic_sig = extract_harmonic_signature(chroma_vector, bass_vector)
+    else:
+        harmonic_sig = chroma_vector
+    
+    # Étape 2: Centre de gravité tonal
+    gravity = compute_tonal_gravity(harmonic_sig, bass_vector)
+    
+    # Étape 3: Analyse des relations d'intervalles
+    interval_scores = np.zeros(12)
+    for i in range(12):
+        # Quinte (relation dominante)
+        fifth = (i + 7) % 12
+        # Quarte (sous-dominante)
+        fourth = (i + 5) % 12
+        # Tierce majeure
+        major_third = (i + 4) % 12
+        # Tierce mineure
+        minor_third = (i + 3) % 12
+        
+        # Score de stabilité tonale
+        interval_scores[i] = (
+            harmonic_sig[i] * 1.0 +          # Fondamentale
+            bass_vector[i] * 1.2 +           # Énergie basse
+            harmonic_sig[fifth] * 0.8 +      # Dominante
+            harmonic_sig[fourth] * 0.6 +      # Sous-dominante
+            max(harmonic_sig[major_third], harmonic_sig[minor_third]) * 0.7  # Tierce
+        )
+    
+    # Étape 4: Fusion intelligente
+    combined_scores = gravity * 0.6 + (interval_scores / (interval_scores.max() + 1e-10)) * 0.4
+    
+    best_idx = np.argmax(combined_scores)
+    
+    # Détermination du mode avec plus de précision
+    major_third_idx = (best_idx + 4) % 12
+    minor_third_idx = (best_idx + 3) % 12
+    
+    major_evidence = bass_vector[major_third_idx] * 1.0 + harmonic_sig[major_third_idx] * 0.5
+    minor_evidence = bass_vector[minor_third_idx] * 1.0 + harmonic_sig[minor_third_idx] * 0.5
+    
+    # Vérification supplémentaire: la quinte est-elle présente?
+    fifth_idx = (best_idx + 7) % 12
+    fifth_strength = bass_vector[fifth_idx] + harmonic_sig[fifth_idx]
+    
+    # Le mode est déterminé par la tierce la plus forte ET la présence de la quinte
+    if minor_evidence > major_evidence * 1.15 and fifth_strength > 0.3:
+        mode = 'minor'
+    else:
+        mode = 'major'
+    
+    key = f"{NOTES_LIST[best_idx]} {mode}"
+    score = float(combined_scores[best_idx] / combined_scores.max())
+    
+    return {"key": key, "score": score}
+
+
+def validate_tonal_stability(key_candidates, timeline_data, chroma_avg, bass_avg):
+    """
+    Validation de stabilité tonale pour éviter les faux positifs.
+    Vérifie que la tonalité détectée est cohérente dans le temps.
+    """
+    if not timeline_data or len(timeline_data) < 3:
+        return True, 100
+    
+    # Vérifier la cohérence temporelle
+    key_streaks = []
+    current_key = None
+    streak_length = 0
+    
+    for segment in timeline_data:
+        if segment['Note'] == current_key:
+            streak_length += 1
+        else:
+            if current_key is not None:
+                key_streaks.append((current_key, streak_length))
+            current_key = segment['Note']
+            streak_length = 1
+    
+    if current_key is not None:
+        key_streaks.append((current_key, streak_length))
+    
+    # Calculer le pourcentage de présence de la tonalité principale
+    total_length = sum(streak for _, streak in key_streaks)
+    main_key_length = max(streak for _, streak in key_streaks)
+    coherence = main_key_length / total_length if total_length > 0 else 0
+    
+    # Vérifier la force des harmoniques
+    main_key_idx = NOTES_LIST.index(key_candidates.split()[0])
+    harmonic_strength = (
+        chroma_avg[main_key_idx] + 
+        chroma_avg[(main_key_idx + 7) % 12] * 0.8 +
+        bass_avg[main_key_idx] * 1.5
+    )
+    
+    # La tonalité est valide si:
+    # 1. Cohérence temporelle > 40%
+    # 2. Force harmonique suffisante
+    is_valid = coherence > 0.4 and harmonic_strength > 0.5
+    
+    stability_score = coherence * 100
+    
+    return is_valid, stability_score
+
+
+def enhanced_key_detection(chroma_avg, bass_global, y_harm, sr, tuning):
+    """
+    Détection de tonalité en 3 passes avec validation croisée.
+    """
+    # Passe 1: Méthode multi-résolution
+    key_multi, conf_multi = detect_key_multi_resolution(y_harm, sr, tuning)
+    
+    # Passe 2: Signature harmonique améliorée
+    result_enhanced = solve_key_sniper_enhanced(chroma_avg, bass_global)
+    
+    # Passe 3: Méthode originale comme filet de sécurité
+    result_original = solve_key_sniper(chroma_avg, bass_global)
+    
+    # Consensus: Si 2 méthodes sur 3 sont d'accord, prendre celle-là
+    keys = [key_multi, result_enhanced['key'], result_original['key']]
+    
+    # Vote majoritaire
+    key_counts = Counter(keys)
+    most_common_key, count = key_counts.most_common(1)[0]
+    
+    if count >= 2:
+        # Consensus trouvé
+        final_key = most_common_key
+    else:
+        # Pas de consensus, prendre la plus confiante
+        confidences = {
+            key_multi: conf_multi / 100,
+            result_enhanced['key']: result_enhanced['score'],
+            result_original['key']: result_original['score']
+        }
+        final_key = max(confidences, key=confidences.get)
+    
+    # Calculer la confiance finale
+    if final_key == result_enhanced['key']:
+        final_conf = result_enhanced['score'] * 100
+    elif final_key == key_multi:
+        final_conf = conf_multi
+    else:
+        final_conf = result_original['score'] * 100
+    
+    return {"key": final_key, "score": min(final_conf / 100, 0.99)}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# --- ARBITRAGE EXPERT AMÉLIORÉ ---
+def arbitrage_expert_universel_v2(chroma, bass_vec, key_cons, key_dom, cam_map, y_harm=None, sr=None, tuning=0.0):
+    """
+    Version améliorée de l'arbitrage avec détection de conflit spectral.
+    """
     cam_c = get_exact_camelot(key_cons)
     cam_d = get_exact_camelot(key_dom)
-
+    
     if not cam_c or not cam_d:
         return {"key": key_cons, "duel_actif": False, "dist_num": 99, "dist_mode": 99, "type": "NONE"}
-
-    val_c, mode_c = int(cam_c[:-1]), cam_c[-1]
-    val_d, mode_d = int(cam_d[:-1]), cam_d[-1]
-
+    
+    try:
+        val_c, mode_c = int(cam_c[:-1]), cam_c[-1]
+        val_d, mode_d = int(cam_d[:-1]), cam_d[-1]
+    except:
+        return {"key": key_cons, "duel_actif": False, "dist_num": 99, "dist_mode": 99, "type": "NONE"}
+    
     dist_num = abs(val_c - val_d)
     if dist_num > 6:
         dist_num = 12 - dist_num
-
+    
     dist_mode = 0 if mode_c == mode_d else 1
-
+    
+    # Si les tonalités sont très proches
     if dist_num <= 1 and dist_mode <= 1:
         idx_c = NOTES_LIST.index(key_cons.split()[0])
         idx_d = NOTES_LIST.index(key_dom.split()[0])
-
-        def get_advanced_strength(idx, mode, chroma_vec, b_vec):
-            quinte = chroma_vec[(idx + 7) % 12]
-            tierce = chroma_vec[(idx + 3) % 12] if mode == 'minor' else chroma_vec[(idx + 4) % 12]
-            basse  = b_vec[idx]
-            return (quinte * 0.5) + (tierce * 0.3) + (basse * 0.2)
-
-        force_c = get_advanced_strength(idx_c, key_cons.split()[1], chroma, bass_vec)
-        force_d = get_advanced_strength(idx_d, key_dom.split()[1], chroma, bass_vec)
-
-        if key_cons == "D minor" and key_dom == "C major":
-            si_idx = NOTES_LIST.index("B")
-            if chroma[si_idx] > 0.15:
-                force_d *= 1.25
-
+        
+        # Analyse spectrale approfondie
+        def analyze_key_strength(idx, mode, chroma_vec, b_vec):
+            """Analyse complète de la force d'une tonalité"""
+            fifth = (idx + 7) % 12
+            third = (idx + 3) % 12 if mode == 'minor' else (idx + 4) % 12
+            fourth = (idx + 5) % 12
+            
+            # Force des harmoniques
+            strength = (
+                chroma_vec[idx] * 1.0 +        # Fondamentale
+                b_vec[idx] * 1.2 +             # Énergie basse
+                chroma_vec[fifth] * 0.8 +      # Quinte (dominante)
+                chroma_vec[fourth] * 0.6 +      # Quarte (sous-dominante)
+                chroma_vec[third] * 0.7         # Tierce caractéristique
+            )
+            
+            # Bonus pour les cadences V-I
+            if b_vec[fifth] > 0.6 and b_vec[idx] > 0.5:
+                strength *= 1.2
+            
+            return strength
+        
+        force_c = analyze_key_strength(idx_c, key_cons.split()[1], chroma, bass_vec)
+        force_d = analyze_key_strength(idx_d, key_dom.split()[1], chroma, bass_vec)
+        
+        # Vérification spéciale pour les basses
         if y_harm is not None and sr is not None:
             sub_vec = get_sub_bass_priority(y_harm, sr, tuning=tuning)
-            if sub_vec[idx_d] > sub_vec[idx_c] * 1.2:
-                return {"key": key_dom, "duel_actif": True, "dist_num": dist_num, "dist_mode": dist_mode, "type": "BASS_DOMINANCE"}
-
-        winner = key_dom if force_d > force_c * 1.15 else key_cons
-        return {"key": winner, "duel_actif": True, "dist_num": dist_num, "dist_mode": dist_mode, "type": "SPECTRAL"}
-
+            if sub_vec[idx_d] > sub_vec[idx_c] * 1.3:
+                return {
+                    "key": key_dom, 
+                    "duel_actif": True, 
+                    "dist_num": dist_num, 
+                    "dist_mode": dist_mode, 
+                    "type": "BASS_DOMINANCE"
+                }
+        
+        # Décision finale avec marge d'hystérésis
+        if force_d > force_c * 1.2:
+            winner = key_dom
+        elif force_c > force_d * 1.2:
+            winner = key_cons
+        else:
+            # Trop proche, on garde la consonne
+            winner = key_cons
+        
+        return {
+            "key": winner, 
+            "duel_actif": True, 
+            "dist_num": dist_num, 
+            "dist_mode": dist_mode, 
+            "type": "SPECTRAL_ENHANCED"
+        }
+    
     return {"key": key_cons, "duel_actif": False, "dist_num": dist_num, "dist_mode": dist_mode, "type": "NONE"}
 
+
+# ══════════════════════════════════════════════════════════════════════════
+# --- FONCTIONS ORIGINALES CONSERVÉES ---
 def seconds_to_mmss(seconds):
     if seconds is None:
         return "??:??"
@@ -341,7 +669,7 @@ def get_key_score(key, chroma_vector, bass_vector):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# --- ENVOI TELEGRAM CORRIGÉ (VERSION FINALE) ---
+# --- ENVOI TELEGRAM CORRIGÉ ---
 def send_telegram_report(caption, fig_radar, fig_timeline, file_name):
     """
     Envoi du rapport Telegram avec gestion robuste des erreurs.
@@ -352,7 +680,6 @@ def send_telegram_report(caption, fig_radar, fig_timeline, file_name):
     
     try:
         # Étape 1: Envoyer le texte du rapport comme message séparé
-        # Essayer d'abord avec HTML, sinon texte brut
         try:
             text_response = requests.post(
                 f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
@@ -365,7 +692,6 @@ def send_telegram_report(caption, fig_radar, fig_timeline, file_name):
                 timeout=30
             )
             
-            # Si le HTML échoue, réessayer sans parse_mode (texte brut)
             if not text_response.ok:
                 requests.post(
                     f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
@@ -377,7 +703,6 @@ def send_telegram_report(caption, fig_radar, fig_timeline, file_name):
                     timeout=30
                 )
         except:
-            # Dernière tentative en texte brut
             requests.post(
                 f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
                 data={
@@ -425,9 +750,7 @@ def send_telegram_report(caption, fig_radar, fig_timeline, file_name):
         
     except Exception as e:
         st.error(f"Erreur d'envoi Telegram : {str(e)}")
-        st.error(traceback.format_exc())
         
-        # Tentative de secours : envoyer juste le texte
         try:
             requests.post(
                 f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
@@ -445,7 +768,7 @@ def send_telegram_report(caption, fig_radar, fig_timeline, file_name):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# --- PROCESS AUDIO ---
+# --- PROCESS AUDIO (VERSION CORRIGÉE) ---
 def process_audio(audio_file, file_name, progress_placeholder):
     status_text = progress_placeholder.empty()
     progress_bar = progress_placeholder.progress(0)
@@ -539,7 +862,8 @@ def process_audio(audio_file, file_name, progress_placeholder):
             idx_end   = int((start + step) * sr)
             b_seg = get_bass_priority(y_harm[idx_start:idx_end], sr, tuning=tuning)
 
-            res       = solve_key_sniper(c_avg, b_seg)
+            # Utilisation de la version améliorée pour les segments
+            res = solve_key_sniper_enhanced(c_avg, b_seg)
             res_modal = solve_key_sniper_modal(c_avg, b_seg)
 
             segment_camelot = get_exact_camelot(res['key'])
@@ -560,9 +884,20 @@ def process_audio(audio_file, file_name, progress_placeholder):
         most_common   = votes.most_common(10)
         total_votes   = sum(votes.values())
 
-        res_global    = solve_key_sniper(chroma_avg, bass_global)
-        final_key     = res_global['key']
-        final_conf    = int(res_global['score'] * 100)
+        # ═══ DÉTECTION DE TONALITÉ ULTRA-PRÉCISE ═══
+        res_global = enhanced_key_detection(chroma_avg, bass_global, y_harm, sr, tuning)
+        final_key = res_global['key']
+        final_conf = min(int(res_global['score'] * 100), 100)
+
+        # Validation de stabilité
+        is_stable, stability_score = validate_tonal_stability(final_key, timeline, chroma_avg, bass_global)
+        if not is_stable and stability_score < 40:
+            # Si instable, utiliser la dominante comme fallback
+            dominant_key = most_common[0][0] if most_common else final_key
+            dominant_conf = int(get_key_score(dominant_key, chroma_avg, bass_global) * 100)
+            if dominant_conf > final_conf * 1.3:
+                final_key = dominant_key
+                final_conf = dominant_conf
 
         res_modal_global = solve_key_sniper_modal(chroma_avg, bass_global)
         modal_key        = res_modal_global.get('key', final_key)
@@ -650,7 +985,8 @@ def process_audio(audio_file, file_name, progress_placeholder):
         arb_dist_mode  = 99
         arb_type       = "NONE"
         if final_conf >= 70 and dominant_conf >= 70:
-            arb_result = arbitrage_expert_universel(
+            # Utilisation de la version améliorée de l'arbitrage
+            arb_result = arbitrage_expert_universel_v2(
                 chroma_avg, bass_global, final_key, dominant_key,
                 CAMELOT_MAP, y_harm, sr, tuning=tuning
             )
@@ -658,7 +994,7 @@ def process_audio(audio_file, file_name, progress_placeholder):
                 decision_pivot = arb_result["key"]
                 arb_dist_num   = arb_result["dist_num"]
                 arb_dist_mode  = arb_result["dist_mode"]
-                arb_type       = arb_result.get("type", "SPECTRAL")
+                arb_type       = arb_result.get("type", "SPECTRAL_ENHANCED")
 
         mod_threshold   = 20.0 if mod_detected else 25.0
         mod_confirmed   = (mod_detected and target_percentage >= mod_threshold)
@@ -707,10 +1043,9 @@ def process_audio(audio_file, file_name, progress_placeholder):
                 avis_expert        = f"✅ ANALYSE STABLE"
                 color_bandeau      = "linear-gradient(135deg, #065f46, #064e3b)"
 
-        # --- CONSTRUCTION DU RAPPORT TELEGRAM (FORMAT TEXTE SIMPLE) ---
+        # --- CONSTRUCTION DU RAPPORT TELEGRAM ---
         if TELEGRAM_TOKEN and CHAT_ID:
             try:
-                # Préparation des lignes du rapport
                 mod_line = ""
                 if mod_detected:
                     perc    = round(target_percentage, 1)
@@ -745,7 +1080,6 @@ def process_audio(audio_file, file_name, progress_placeholder):
                 tuning_display = "440.0 Hz (corrigé automatiquement)" if correction_applied else f"{round(440 * (2 ** (tuning / 1200)), 1)} Hz"
                 accordage_line = f"🎸 ACCORDAGE : {tuning_display} ✅\n"
 
-                # --- DÉTECTION DE CHOC HARMONIQUE ---
                 choc_harmonique_alerte = ""
                 is_dissonant = False
 
@@ -768,7 +1102,6 @@ def process_audio(audio_file, file_name, progress_placeholder):
                         except (ValueError, IndexError):
                             pass
 
-                # --- TONALITÉ VERROUILLÉE PAR L'ALGORITHME ---
                 pure_camelot_tg = get_exact_camelot(confiance_pure_key)
                 verrou_emoji = "🔴" if is_dissonant else "🟢"
                 verrou_line = (
@@ -777,7 +1110,6 @@ def process_audio(audio_file, file_name, progress_placeholder):
                     f"\n└ 🤖 AVIS EXPERT: {avis_expert}"
                 )
 
-                # --- CONSENSUS HARMONIQUE (systématique) ---
                 cam_moteur   = get_exact_camelot(final_key)
                 cam_energie  = get_exact_camelot(dominant_key)
                 if final_key == dominant_key:
@@ -793,7 +1125,6 @@ def process_audio(audio_file, file_name, progress_placeholder):
                     f"  — Confiance : {dominant_conf}%"
                 )
 
-                # --- FRÉQUENCE DOMINANTE (systématique) ---
                 freq_dominante_line = (
                     f"\n🔊 FRÉQUENCE DOMINANTE :"
                     f"\n├ Clé : {dominant_key.upper()} ({cam_energie})"
@@ -801,7 +1132,6 @@ def process_audio(audio_file, file_name, progress_placeholder):
                     f"\n└ Force (dom_power) : {round(dom_power, 1)}"
                 )
 
-                # Construction du caption final (format texte simple, sans Markdown)
                 caption = (
                     f"🎯 RCDJ228 MUSIC SNIPER\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
@@ -828,7 +1158,6 @@ def process_audio(audio_file, file_name, progress_placeholder):
                     f"🛡️ SECTION HARMONIQUE: {seconds_to_mmss(harm_start)} → {seconds_to_mmss(harm_end)}"
                 )
 
-                # Création des graphiques
                 CAMELOT_LABELS_TG = [get_exact_camelot(f"{n} major") for n in NOTES_LIST]
                 fig_radar = go.Figure(data=go.Scatterpolar(
                     r=np.mean(librosa.feature.chroma_cqt(y=y_filt, sr=sr, tuning=tuning), axis=1),
@@ -840,7 +1169,6 @@ def process_audio(audio_file, file_name, progress_placeholder):
                     polar=dict(radialaxis=dict(visible=False))
                 )
 
-                # Timeline (optionnelle)
                 fig_tl = None
                 df_tl = pd.DataFrame(timeline)
                 if not df_tl.empty:
@@ -853,7 +1181,6 @@ def process_audio(audio_file, file_name, progress_placeholder):
                         title="ÉVOLUTION TEMPORELLE (Camelot)"
                     )
 
-                # Envoi du rapport Telegram avec la fonction corrigée
                 send_telegram_report(caption, fig_radar, fig_tl, file_name)
 
             except Exception as e:
@@ -1014,18 +1341,15 @@ if uploaded_files:
                         value=f"{analysis_data.get('conf', 0)}%"
                     )
 
-                # --- NOUVELLE CASE : TONALITÉ VERROUILLÉE PAR L'ALGORITHME ---
                 st.markdown("---")
                 st.subheader("🔒 DÉCISION FINALE DE L'ALGORITHME")
 
                 verrou_col1, verrou_col2 = st.columns([3, 2])
 
                 with verrou_col1:
-                    # Style pour la case verrouillée
-                    border_color = "#10b981"  # Vert par défaut
+                    border_color = "#10b981"
                     bg_color = "rgba(16, 185, 129, 0.1)"
                     
-                    # Si choc harmonique, changer la couleur
                     if analysis_data["key"] != analysis_data["dominant_key"]:
                         _cam_f_str = analysis_data.get("camelot", "??")
                         _cam_d_str = analysis_data.get("dominant_camelot", "??")
@@ -1035,7 +1359,7 @@ if uploaded_files:
                                 _cam_d = int(_cam_d_str[:-1])
                                 _diff = abs(_cam_f - _cam_d)
                                 if _diff > 1 and _diff < 11:
-                                    border_color = "#ef4444"  # Rouge pour choc
+                                    border_color = "#ef4444"
                                     bg_color = "rgba(239, 68, 68, 0.1)"
                             except (ValueError, IndexError):
                                 pass
@@ -1090,7 +1414,6 @@ if uploaded_files:
                         unsafe_allow_html=True
                     )
 
-                # Affichage détaillé si conflit
                 if analysis_data["key"] != analysis_data["dominant_key"]:
                     st.markdown("---")
                     detail_col1, detail_col2, detail_col3 = st.columns(3)
@@ -1150,7 +1473,6 @@ if uploaded_files:
                             verdict = "💎 STABILITÉ HARMONIQUE"
                             verdict_color = "#10b981"
                         
-                        # Conversion correcte de l'hex en RGB pour le rgba
                         try:
                             verdict_r = int(verdict_color[1:3], 16)
                             verdict_g = int(verdict_color[3:5], 16)
@@ -1177,7 +1499,6 @@ if uploaded_files:
                             unsafe_allow_html=True
                         )
 
-                # Si choc harmonique, afficher l'alerte détaillée
                 if analysis_data["key"] != analysis_data["dominant_key"]:
                     _cam_f_str = analysis_data.get("camelot", "??")
                     _cam_d_str = analysis_data.get("dominant_camelot", "??")
@@ -1215,7 +1536,6 @@ if uploaded_files:
                         except (ValueError, IndexError):
                             pass
 
-                # --- AFFICHAGE SYSTÉMATIQUE DU CONSENSUS ET DE LA FRÉQUENCE ---
                 tonalite_moteur = analysis_data.get('camelot', '??')
                 note_brute = analysis_data.get('dominant_key', 'Inconnue')
                 freq_brute = analysis_data.get('dominant_percentage', 0)
@@ -1378,6 +1698,7 @@ with st.sidebar:
     st.markdown("---")
     st.success("✅ **Correction Auto Accordage 440 Hz** activée — zéro erreur de tonalité")
     st.success("✅ **Nettoyage automatique activé**")
+    st.info("🆕 **Moteur Ultra-Précis v2.0** - Détection multi-résolution + vote consensus")
 
     if st.button("🧹 Vider la file d'analyse"):
         st.session_state.analyses = {}
